@@ -13,3 +13,21 @@ todos.json
 
 # typescript
 *.tsbuildinfo
+
+# InsForge & AI agent skills
+.insforge
+.agent
+.agents
+.augment
+.claude
+.cline
+.github/copilot*
+.kilocode
+.qoder
+.qwen
+.roo
+.trae
+.windsurf
+
+# keep the template committed
+!.env.example

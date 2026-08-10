@@ -6,6 +6,9 @@
     "prettier.config.js",
     "vite.config.ts"
   ],
+  // Edge functions target Deno (npm: specifiers, global Deno) and are deployed
+  // by the InsForge CLI, not bundled by Vite — they are typechecked there.
+  "exclude": ["node_modules", "dist", "functions"],
   "compilerOptions": {
     "target": "ES2022",
     "jsx": "react-jsx",
