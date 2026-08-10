@@ -31,3 +31,4 @@ todos.json
 
 # keep the template committed
 !.env.example
+.vercel
