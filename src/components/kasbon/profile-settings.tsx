@@ -52,6 +52,8 @@ export function ProfileSettings({
   )
   const [phone, setPhone] = React.useState(profile.phone ?? "")
   const [familyPhone, setFamilyPhone] = React.useState(profile.family_phone ?? "")
+  const [bankName, setBankName] = React.useState(profile.bank_name ?? "")
+  const [bankAccount, setBankAccount] = React.useState(profile.bank_account ?? "")
   const [error, setError] = React.useState("")
 
   const sisaKontrak = remainingContract(toDateInput(contractEnd) || null)
@@ -72,6 +74,9 @@ export function ProfileSettings({
       if (!phone.trim() || !familyPhone.trim()) {
         throw new Error("Kedua nomor telepon wajib diisi.")
       }
+      if (!bankName.trim() || !bankAccount.trim()) {
+        throw new Error("Nama Bank dan Nomor Rekening wajib diisi.")
+      }
 
       return updateProfile(profile.id, {
         full_name: fullName.trim(),
@@ -81,6 +86,8 @@ export function ProfileSettings({
         contract_end: toDateInput(contractEnd),
         phone: phone.trim(),
         family_phone: familyPhone.trim(),
+        bank_name: bankName.trim(),
+        bank_account: bankAccount.trim(),
       })
     },
     onSuccess: async () => {
@@ -201,6 +208,28 @@ export function ProfileSettings({
                       type="tel"
                       value={familyPhone}
                       onChange={(event) => setFamilyPhone(event.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="settings-bank-name">Nama Bank</Label>
+                    <Input
+                      id="settings-bank-name"
+                      type="text"
+                      value={bankName}
+                      onChange={(event) => setBankName(event.target.value)}
+                      placeholder="Contoh: BCA, Mandiri"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="settings-bank-account">No. Rekening</Label>
+                    <Input
+                      id="settings-bank-account"
+                      type="text"
+                      value={bankAccount}
+                      onChange={(event) => setBankAccount(event.target.value)}
+                      placeholder="Nomor rekening"
                       required
                     />
                   </div>

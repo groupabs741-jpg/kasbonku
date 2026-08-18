@@ -32,3 +32,6 @@ todos.json
 # keep the template committed
 !.env.example
 .vercel
+
+# TestSprite scratch/logs
+testsprite_tests/tmp

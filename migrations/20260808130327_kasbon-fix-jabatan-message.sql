@@ -37,13 +37,20 @@ BEGIN
       NEW.join_date      := v_profile.join_date;
     END IF;
 
-    NEW.status       := 'Diajukan';
+    -- Hanya set status default jika belum diset oleh caller (RPC submit_application
+    -- sudah set 'Menunggu TTD' + document_sent_at).
+    IF NEW.status IS NULL THEN
+      NEW.status := 'Diajukan';
+    END IF;
+    IF NEW.document_sent_at IS NULL AND NEW.status = 'Menunggu TTD' THEN
+      NEW.document_sent_at := NOW();
+    END IF;
+
     NEW.admin_note   := NULL;
     NEW.reviewed_by  := NULL;
     NEW.reviewed_at  := NULL;
     NEW.disbursed_at := NULL;
     NEW.processed_at := NULL;
-    NEW.document_sent_at := NULL;
     NEW.signed_at    := NULL;
   END IF;
 

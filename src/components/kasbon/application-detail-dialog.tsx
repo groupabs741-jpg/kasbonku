@@ -125,7 +125,7 @@ export function ApplicationDetailDialog({
               <div className="mt-3">
                 <DocumentList
                   applicationId={application.id}
-                  emptyLabel="Dokumen resmi akan muncul setelah admin memprosesnya."
+                  emptyLabel="Dokumen resmi otomatis dibuat saat pengajuan dikirim."
                 />
               </div>
             </div>
@@ -174,7 +174,7 @@ export function ApplicationDetailDialog({
                   onUploadSignature(application)
                 }}
               >
-                <UploadCloud /> Tanda tangan & unggah
+                <UploadCloud /> Unggah dokumen TTD
               </Button>
             ) : null}
             {application.status === "Ditolak" ? (

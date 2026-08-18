@@ -6,7 +6,6 @@ import {
   ChevronRight,
   CircleAlert,
   CircleDollarSign,
-  FileClock,
   FileText,
   Plus,
   ReceiptText,
@@ -43,14 +42,20 @@ import {
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import {
   EmptyState,
   ErrorBlock,
   LoadingBlock,
   Metric,
   PageIntro,
+  ProgressStepper,
   StatCard,
   StatusBadge,
-  StatusTimeline,
   fieldClassName,
 } from "@/components/kasbon/shared"
 import { DocumentList } from "@/components/kasbon/document-list"
@@ -134,7 +139,7 @@ function ApplicationCard({
                   className="whitespace-nowrap"
                   onClick={onUpload}
                 >
-                  Tanda tangan & unggah
+                  Unggah dokumen TTD
                 </Button>
               ) : null}
               {application.status === "Ditolak" ? (
@@ -144,6 +149,127 @@ function ApplicationCard({
               ) : null}
             </div>
           </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * Kartu "Progress Pengajuan" — landing view utama pemohon. Stepper horizontal
+ * menampilkan tahap pengajuan yang sedang berjalan beserta tombol aksi
+ * kontekstual sesuai status aktif (upload TTD, revisi, atau ajukan baru).
+ */
+function ProgressPengajuanCard({
+  openApplication,
+  rejected,
+  actions,
+}: {
+  /** Pengajuan yang masih berjalan (ACTIVE_STATUSES), jika ada. */
+  openApplication: Application | null
+  /** Pengajuan ditolak yang menunggu revisi — hanya saat tak ada yang berjalan. */
+  rejected: Application | null
+  actions: ApplicantActions
+}) {
+  // Kasbon yang sudah cair dan masih diangsur menahan pengajuan baru.
+  const running = openApplication?.status === "Disetujui / Cair"
+  const stepperApplication = openApplication ?? rejected
+  const badgeStatus = stepperApplication?.status ?? null
+
+  return (
+    <Card className="border-primary/15 bg-primary/[0.03] shadow-none">
+      <CardHeader className="border-b border-border/70 pb-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <CardTitle className="text-base">Progress pengajuan</CardTitle>
+            <CardDescription className="mt-1">
+              {openApplication
+                ? `Posisi pengajuan ${openApplication.code} saat ini.`
+                : rejected
+                  ? `Pengajuan ${rejected.code} ditolak dan menunggu revisi kamu.`
+                  : "Belum ada pengajuan yang sedang berjalan."}
+            </CardDescription>
+          </div>
+          {badgeStatus ? <StatusBadge status={badgeStatus} /> : null}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-5 p-5">
+        {stepperApplication ? (
+          <ProgressStepper status={stepperApplication.status} />
+        ) : null}
+
+        {openApplication ? (
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {statusNarrative(openApplication.status)}
+          </p>
+        ) : rejected ? (
+          <div className="flex items-start gap-2.5 rounded-2xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200">
+            <CircleAlert className="mt-0.5 size-4 shrink-0" />
+            <span>
+              {rejected.admin_note ? (
+                <>
+                  <strong className="font-medium">Catatan admin:</strong>{" "}
+                  {rejected.admin_note}
+                </>
+              ) : (
+                "Pengajuan ditolak. Revisi datanya lalu ajukan ulang."
+              )}
+            </span>
+          </div>
+        ) : (
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            Ajukan kasbon untuk mulai melacak prosesnya di kartu ini.
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          {openApplication?.status === "Menunggu TTD" ? (
+            <Button onClick={() => actions.onUploadSignature(openApplication)}>
+              <UploadCloud />
+              Unggah dokumen TTD
+            </Button>
+          ) : null}
+
+          {rejected ? (
+            <Button onClick={() => actions.onRevise(rejected)}>
+              <RotateCcw />
+              Revisi & ajukan ulang
+            </Button>
+          ) : null}
+
+          {!openApplication && !rejected ? (
+            <Button onClick={actions.onNewApplication}>
+              <Plus />
+              Ajukan kasbon baru
+            </Button>
+          ) : null}
+
+          {running ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger render={<span className="inline-flex" />}>
+                  <Button disabled>
+                    <Plus />
+                    Ajukan kasbon baru
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Selesaikan kasbon yang sedang berjalan dulu sebelum mengajukan
+                  lagi.
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
+
+          {openApplication ? (
+            <Button
+              variant="ghost"
+              onClick={() => actions.onOpenApplication(openApplication)}
+            >
+              Lihat detail
+              <ChevronRight />
+            </Button>
+          ) : null}
         </div>
       </CardContent>
     </Card>
@@ -165,58 +291,30 @@ export function ApplicantOverview({
   const openApplication = data.applications.find((item) =>
     ACTIVE_STATUSES.includes(item.status)
   )
-  const rejected = data.applications.find((item) => item.status === "Ditolak")
+  // Only surface a rejected application for action when nothing is in flight; a
+  // revision starts a fresh submission, so this is the one actionable reject.
+  const rejectedActionable = openApplication
+    ? null
+    : (data.applications.find((item) => item.status === "Ditolak") ?? null)
   const activeReceivable = data.receivables.find(
     (item) => item.status === "Aktif"
   )
   const settledCount = data.applications.filter(
     (item) => item.status === "Lunas"
   ).length
-  const canApply = !openApplication
-
-  const actionable =
-    openApplication?.status === "Menunggu TTD"
-      ? openApplication
-      : rejected && !openApplication
-        ? rejected
-        : null
 
   return (
     <div className="space-y-6">
       <PageIntro
         title={`Halo, ${firstName}.`}
-        description="Pantau pengajuan dan potongan angsuran dari satu ruang kerja."
-        action={
-          <Button
-            size="lg"
-            onClick={actions.onNewApplication}
-            disabled={!canApply}
-          >
-            <Plus />
-            Ajukan kasbon
-          </Button>
-        }
+        description="Pantau progress pengajuan dan potongan angsuran dari satu ruang kerja."
       />
 
-      {openApplication ? (
-        <Card className="border-primary/15 bg-primary/[0.04] shadow-none">
-          <CardContent className="flex items-start gap-3 p-4 sm:p-5">
-            <CircleAlert className="mt-0.5 size-4 shrink-0 text-primary" />
-            <div className="min-w-0 space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">
-                  {openApplication.code}
-                </span>
-                <StatusBadge status={openApplication.status} />
-              </div>
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                {statusNarrative(openApplication.status)} Kamu bisa mengajukan
-                kasbon baru setelah kasbon ini lunas atau ditolak.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
+      <ProgressPengajuanCard
+        openApplication={openApplication ?? null}
+        rejected={rejectedActionable}
+        actions={actions}
+      />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
@@ -262,129 +360,6 @@ export function ApplicantOverview({
           icon={FileText}
         />
       </div>
-
-      {actionable ? (
-        <Card className="border-border/80 shadow-none">
-          <CardHeader className="flex flex-row items-start justify-between gap-4 border-b border-border/70 pb-4">
-            <div>
-              <CardTitle className="text-base">Perlu tindakan kamu</CardTitle>
-              <CardDescription className="mt-1">
-                {actionable.status === "Menunggu TTD"
-                  ? "Tanda tangani dokumen, cetak untuk TTD basah atasan langsung, lalu unggah scan-nya."
-                  : "Pengajuan ditolak — revisi datanya lalu ajukan ulang."}
-              </CardDescription>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => actions.onOpenApplication(actionable)}
-            >
-              Detail
-              <ChevronRight />
-            </Button>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-start gap-3">
-              <div className="grid size-10 shrink-0 place-items-center rounded-2xl bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-                <FileClock className="size-4.5" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <p className="font-medium">{actionable.code}</p>
-                  <StatusBadge status={actionable.status} />
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {actionable.reason_category}
-                </p>
-              </div>
-            </div>
-            <div className="flex shrink-0 items-center justify-between gap-4 border-t border-border/70 pt-3 sm:block sm:border-t-0 sm:pt-0 sm:text-right">
-              <div>
-                <p className="text-xs text-muted-foreground">Nominal</p>
-                <p className="mt-1 font-semibold">
-                  {formatCurrency(actionable.amount)}
-                </p>
-              </div>
-              {actionable.status === "Menunggu TTD" ? (
-                <Button
-                  size="sm"
-                  className="mt-0 sm:mt-3"
-                  onClick={() => actions.onUploadSignature(actionable)}
-                >
-                  <UploadCloud />
-                  Tanda tangan & unggah
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  className="mt-0 sm:mt-3"
-                  onClick={() => actions.onRevise(actionable)}
-                >
-                  <RotateCcw />
-                  Revisi
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      <div className="grid gap-4 xl:grid-cols-[1.35fr_0.85fr]">
-        <Card className="border-border/80 shadow-none">
-          <CardHeader className="border-b border-border/70 pb-4">
-            <CardTitle className="text-base">Pengajuan terbaru</CardTitle>
-            <CardDescription className="mt-1">
-              Tiga pengajuan terakhir beserta statusnya.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 p-5">
-            {data.applications.length === 0 ? (
-              <EmptyState
-                icon={FileText}
-                title="Belum ada pengajuan"
-                description="Ajukan kasbon pertama kamu untuk mulai melacak prosesnya di sini."
-                action={
-                  <Button size="sm" onClick={actions.onNewApplication}>
-                    <Plus /> Ajukan kasbon
-                  </Button>
-                }
-              />
-            ) : (
-              data.applications
-                .slice(0, 3)
-                .map((application) => (
-                  <ApplicationCard
-                    key={application.id}
-                    application={application}
-                    onDetail={() => actions.onOpenApplication(application)}
-                    onUpload={() => actions.onUploadSignature(application)}
-                    onRevise={() => actions.onRevise(application)}
-                  />
-                ))
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/80 shadow-none">
-          <CardHeader className="border-b border-border/70 pb-4">
-            <CardTitle className="text-base">Tahap pengajuan</CardTitle>
-            <CardDescription className="mt-1">
-              {openApplication
-                ? `Posisi ${openApplication.code} saat ini.`
-                : "Belum ada pengajuan yang berjalan."}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="p-5">
-            {openApplication ? (
-              <StatusTimeline status={openApplication.status} />
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Timeline muncul setelah kamu mengirim pengajuan.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
     </div>
   )
 }
@@ -412,8 +387,8 @@ export function ApplicantApplications({
   return (
     <div className="space-y-6">
       <PageIntro
-        title="Pengajuan kasbon"
-        description="Semua pengajuan tersimpan di sini, termasuk dokumen dan catatan review admin."
+        title="Riwayat pengajuan"
+        description="Semua pengajuan tersimpan di sini, termasuk yang sudah selesai dan ditolak."
         action={
           <Button onClick={actions.onNewApplication} disabled={!canApply}>
             <Plus />
@@ -441,7 +416,7 @@ export function ApplicantApplications({
               }
               description={
                 filter === "action"
-                  ? "Semua pengajuan kamu sedang diproses admin."
+                  ? "Semua pengajuan kamu sedang dalam proses review."
                   : "Ajukan kasbon pertama kamu untuk mulai melacak prosesnya di sini."
               }
             />
@@ -588,8 +563,8 @@ export function ApplicantInstallments({ data }: { data: ApplicantData }) {
   return (
     <div className="space-y-6">
       <PageIntro
-        title="Angsuran"
-        description="Lihat kartu piutang dan status pemotongan gaji per bulan."
+        title="Angsuran & kartu piutang"
+        description="Kartu piutang read-only milikmu: nominal pokok, biaya admin, rincian per bulan, dan sisa piutang yang dikelola admin."
       />
       <Tabs defaultValue="active" className="gap-5">
         <TabsList>
@@ -647,7 +622,7 @@ export function ApplicantDocuments({ data }: { data: ApplicantData }) {
         <EmptyState
           icon={FileText}
           title="Belum ada dokumen"
-          description="Dokumen resmi muncul setelah admin memproses pengajuan kamu."
+          description="Dokumen resmi muncul otomatis begitu kamu mengirim pengajuan."
         />
       </div>
     )
@@ -693,7 +668,7 @@ export function ApplicantDocuments({ data }: { data: ApplicantData }) {
         <CardContent className="p-5">
           <DocumentList
             applicationId={selected.id}
-            emptyLabel="Admin belum menyiapkan dokumen untuk pengajuan ini."
+            emptyLabel="Dokumen resmi sedang disiapkan. Muat ulang sebentar lagi."
           />
         </CardContent>
         <CardFooter className="border-t border-border/70 px-5 py-4 text-xs leading-relaxed text-muted-foreground">

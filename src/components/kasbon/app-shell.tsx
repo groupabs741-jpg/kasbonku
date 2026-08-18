@@ -58,8 +58,8 @@ export type SectionKey =
 
 const APPLICANT_NAV: { label: string; section: SectionKey; icon: LucideIcon }[] = [
   { label: "Ringkasan", section: "overview", icon: LayoutDashboard },
-  { label: "Pengajuan", section: "pengajuan", icon: FileText },
-  { label: "Angsuran", section: "angsuran", icon: ReceiptText },
+  { label: "Riwayat pengajuan", section: "pengajuan", icon: FileText },
+  { label: "Angsuran & piutang", section: "angsuran", icon: ReceiptText },
   { label: "Dokumen", section: "dokumen", icon: FileCheck2 },
 ]
 

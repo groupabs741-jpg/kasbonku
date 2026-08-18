@@ -208,11 +208,12 @@ CREATE TABLE public.applications (
     GENERATED ALWAYS AS (ROUND(amount * 0.015, 2)) STORED,
   monthly_installment NUMERIC(14, 2)
     GENERATED ALWAYS AS (ROUND(amount / tenure_months, 2)) STORED,
+  -- Admin bulanan = 1% dari pokok, ditagih tiap bulan (total = 1% * pokok * tenor).
   monthly_admin_fee   NUMERIC(14, 2)
-    GENERATED ALWAYS AS (ROUND(amount / tenure_months * 0.01, 2)) STORED,
+    GENERATED ALWAYS AS (ROUND(amount * 0.01, 2)) STORED,
   net_disbursement    NUMERIC(14, 2)
     GENERATED ALWAYS AS (
-      ROUND(amount - (amount * 0.015) - (amount / tenure_months * 0.01 * tenure_months), 2)
+      ROUND(amount - (amount * 0.015) - (amount * 0.01 * tenure_months), 2)
     ) STORED,
 
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),

@@ -6,10 +6,8 @@ export type Jabatan = "Staf/Pelaksana" | "Koordinator" | "SPV/Manager"
 
 export type ApplicationStatus =
   | "Diajukan"
-  | "Diproses Admin"
   | "Menunggu TTD"
   | "Menunggu Review"
-  | "Menunggu TTD Basah"
   | "Ditolak"
   | "Disetujui / Cair"
   | "Lunas"
@@ -74,10 +72,8 @@ export const MONTHLY_ADMIN_RATE = 0.01
 /** Statuses that block a new submission (PRD 4.5, mirrors the partial unique index). */
 export const ACTIVE_STATUSES: ApplicationStatus[] = [
   "Diajukan",
-  "Diproses Admin",
   "Menunggu TTD",
   "Menunggu Review",
-  "Menunggu TTD Basah",
   "Disetujui / Cair",
 ]
 
@@ -85,7 +81,7 @@ export const DOCUMENT_LABELS: Record<DocumentKind, string> = {
   permohonan: "Dokumen kasbon resmi",
   persetujuan: "Lembar Persetujuan",
   penyerahan: "Lembar Penyerahan",
-  ttd_pemohon: "Scan TTD pemohon & atasan langsung",
+  ttd_pemohon: "Scan dokumen bertanda tangan",
   ttd_scan: "Scan dokumen TTD lengkap",
   ttd_digital: "Tanda tangan digital",
 }
@@ -105,6 +101,8 @@ export type Profile = {
   contract_end: string | null
   phone: string | null
   family_phone: string | null
+  bank_name: string | null
+  bank_account: string | null
   created_at: string
   updated_at: string
 }
@@ -122,6 +120,8 @@ export type Application = {
   tenure_months: number
   phone: string
   family_phone: string
+  bank_name: string
+  bank_account: string
   reason_category: ReasonCategory
   reason_detail: string | null
   status: ApplicationStatus
@@ -232,8 +232,9 @@ export function calculateFees(amount: number, tenureMonths: number) {
   const safeTenure = tenureMonths > 0 ? tenureMonths : 1
   const provisi = Math.round(amount * PROVISI_RATE * 100) / 100
   const monthlyInstallment = Math.round((amount / safeTenure) * 100) / 100
-  const monthlyAdmin =
-    Math.round(monthlyInstallment * MONTHLY_ADMIN_RATE * 100) / 100
+  // Admin bulanan = 1% dari pokok pinjaman, ditagih tiap bulan angsuran.
+  // Total admin = monthlyAdmin * tenure = 1% * pinjaman * lama angsuran.
+  const monthlyAdmin = Math.round(amount * MONTHLY_ADMIN_RATE * 100) / 100
   const netDisbursement = Math.max(
     0,
     Math.round((amount - provisi - monthlyAdmin * safeTenure) * 100) / 100
@@ -259,21 +260,69 @@ export function remainingContract(contractEnd: string | null | undefined) {
   return { days, label: `${months} bulan ${rest} hari` }
 }
 
-/** Position of a status on the applicant-facing progress timeline. */
+/**
+ * Empat tahap kanonik yang dipakai stepper "Progress Pengajuan" di dashboard
+ * pemohon maupun ringkasan admin — keduanya membaca urutan yang sama. "Ditolak"
+ * berada di luar jalur ini dan ditangani terpisah oleh pemanggil.
+ */
+export type ProgressStep = {
+  key: string
+  label: string
+  description: string
+  statuses: ApplicationStatus[]
+}
+
+export const PROGRESS_STEPS: ProgressStep[] = [
+  {
+    key: "diajukan",
+    label: "Diajukan",
+    description: "Pengajuan masuk, dokumen resmi otomatis dibuat",
+    statuses: ["Diajukan"],
+  },
+  {
+    key: "ttd",
+    label: "Menunggu TTD",
+    description: "Cetak, tanda tangan manual, lalu unggah scan",
+    statuses: ["Menunggu TTD"],
+  },
+  {
+    key: "review",
+    label: "Menunggu Review",
+    description: "Admin memeriksa dokumen bertanda tangan",
+    statuses: ["Menunggu Review"],
+  },
+  {
+    key: "selesai",
+    label: "Disetujui / Cair",
+    description: "Dana dicairkan, angsuran mulai berjalan",
+    statuses: ["Disetujui / Cair", "Lunas"],
+  },
+]
+
+/** Indeks tahap aktif pada PROGRESS_STEPS; "Ditolak" jatuh ke tahap Review. */
+export function progressStepIndex(status: ApplicationStatus): number {
+  if (status === "Ditolak") {
+    return PROGRESS_STEPS.findIndex((step) =>
+      step.statuses.includes("Menunggu Review")
+    )
+  }
+  const index = PROGRESS_STEPS.findIndex((step) =>
+    step.statuses.includes(status)
+  )
+  return index === -1 ? 0 : index
+}
+
+/** Position of a status on the applicant-facing progress bar (percentage). */
 export function statusProgress(status: ApplicationStatus) {
   switch (status) {
     case "Diajukan":
-      return 12
-    case "Diproses Admin":
-      return 32
+      return 15
     case "Menunggu TTD":
-      return 52
+      return 45
     case "Menunggu Review":
-      return 66
-    case "Menunggu TTD Basah":
-      return 82
+      return 72
     case "Disetujui / Cair":
-      return 92
+      return 95
     case "Lunas":
       return 100
     case "Ditolak":
@@ -287,15 +336,11 @@ export function statusProgress(status: ApplicationStatus) {
 export function statusNarrative(status: ApplicationStatus) {
   switch (status) {
     case "Diajukan":
-      return "Pengajuan sudah masuk dan menunggu diproses admin."
-    case "Diproses Admin":
-      return "Admin sedang menyiapkan dokumen resmi kasbon kamu."
+      return "Pengajuan sudah masuk. Dokumen resmi otomatis dibuat dan dikirim ke email kamu."
     case "Menunggu TTD":
-      return "Tanda tangani di dashboard, cetak, minta tanda tangan basah atasan langsung, lalu unggah scan-nya."
+      return "Cetak dokumen yang sudah dikirim ke email, tandatangani secara manual, lalu unggah scan-nya ke dashboard."
     case "Menunggu Review":
       return "Scan dokumen bertanda tangan kamu sedang diperiksa admin."
-    case "Menunggu TTD Basah":
-      return "Dokumen sedang dicetak dan diedarkan untuk tanda tangan wakil ketua, ketua, sekretaris, dan bendahara."
     case "Disetujui / Cair":
       return "Dana sudah dicairkan dan angsuran mulai dipotong dari gaji."
     case "Lunas":
@@ -319,6 +364,8 @@ export function isProfileComplete(profile: Profile | null | undefined) {
     profile.contract_start &&
     profile.contract_end &&
     profile.phone &&
-    profile.family_phone
+    profile.family_phone &&
+    profile.bank_name &&
+    profile.bank_account
   )
 }

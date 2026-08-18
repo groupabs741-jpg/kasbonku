@@ -1,15 +1,11 @@
 import * as React from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
-  BadgeCheck,
   Check,
   CircleAlert,
   Clock3,
-  FileCog,
   FileText,
-  PenLine,
-  Send,
-  Upload,
+  Landmark,
   UserRound,
   X,
 } from "lucide-react"
@@ -34,25 +30,18 @@ import {
 import { DocumentList } from "@/components/kasbon/document-list"
 import {
   fetchApplicationEvents,
-  fetchDocuments,
-  fetchOfficialDocumentHtml,
   flushNotifications,
-  generateDocuments,
   setApplicationStatus,
-  uploadSignedScan,
-  writeHtmlToTab,
 } from "@/lib/api"
 import { formatCurrency, formatDate, formatDateTime } from "@/lib/format"
 import { POSITION_LIMITS, remainingContract } from "@/lib/kasbon"
 import type { Application } from "@/lib/kasbon"
 
 /**
- * The admin side of the flow in PRD 5: generate the official document, send it
- * to the applicant for signing, review it, circulate the printout for wet
- * signatures, then disburse — or reject with a note the applicant can act on.
- *
- * Laid out as a wide two-column dialog: the left column is the case file the
- * admin reads, the right column is what they act on.
+ * Detail pengajuan dari sisi admin. Dokumen resmi sudah otomatis dibuat saat
+ * pemohon submit — admin tinggal klik "Kirim Dokumen ke Pemohon" untuk
+ * memindahkan status ke "Menunggu TTD". Setelah pemohon upload scan TTD, admin
+ * review lalu setujui atau tolak.
  */
 export function AdminApplicationSheet({
   application,
@@ -67,32 +56,30 @@ export function AdminApplicationSheet({
   const [note, setNote] = React.useState("")
   const [error, setError] = React.useState("")
   const [rejecting, setRejecting] = React.useState(false)
-  const scanInputRef = React.useRef<HTMLInputElement>(null)
+  const [disbursing, setDisbursing] = React.useState(false)
   const noteRef = React.useRef<HTMLTextAreaElement>(null)
 
   React.useEffect(() => {
     setNote("")
     setError("")
     setRejecting(false)
+    setDisbursing(false)
   }, [application?.id])
 
-  // The reject form lives further up the action column, so bring it into view
-  // instead of leaving the admin staring at an unchanged screen.
   React.useEffect(() => {
     if (!rejecting) return
+    setDisbursing(false)
     noteRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })
     noteRef.current?.focus({ preventScroll: true })
   }, [rejecting])
 
+  React.useEffect(() => {
+    if (disbursing) setRejecting(false)
+  }, [disbursing])
+
   const events = useQuery({
     queryKey: ["application-events", application?.id],
     queryFn: () => fetchApplicationEvents(application!.id),
-    enabled: Boolean(application),
-  })
-
-  const documents = useQuery({
-    queryKey: ["documents", application?.id],
-    queryFn: () => fetchDocuments(application!.id),
     enabled: Boolean(application),
   })
 
@@ -104,16 +91,6 @@ export function AdminApplicationSheet({
     await queryClient.invalidateQueries({ queryKey: ["application-events"] })
   }
 
-  const generate = useMutation({
-    mutationFn: () => generateDocuments(application!.id),
-    onSuccess: async () => {
-      setError("")
-      await invalidate()
-      onNotify("Dokumen resmi berhasil dibuat dan siap dikirim ke pemohon.")
-    },
-    onError: (mutationError) => setError(errorText(mutationError)),
-  })
-
   const changeStatus = useMutation({
     mutationFn: (input: {
       status: Application["status"]
@@ -123,80 +100,26 @@ export function AdminApplicationSheet({
       setError("")
       await invalidate()
       void flushNotifications()
-      // The wet-signature stage keeps the dialog open: the upload happens here.
-      if (input.status !== "Menunggu TTD Basah") onClose()
+      onClose()
       onNotify(STATUS_MESSAGES[input.status] ?? "Status pengajuan diperbarui.")
     },
     onError: (mutationError) => setError(errorText(mutationError)),
   })
 
-  const uploadScan = useMutation({
-    mutationFn: (file: File) => uploadSignedScan(application!, file),
-    onSuccess: async () => {
-      setError("")
-      await invalidate()
-      void flushNotifications()
-      onNotify("Scan dokumen lengkap tersimpan. Dana sudah bisa dicairkan.")
-    },
-    onError: (mutationError) => setError(errorText(mutationError)),
-  })
-
-  /**
-   * Passing review is also the cue to print, so the document opens straight
-   * away. The tab is claimed inside the click — opening it after the awaits
-   * would be a popup the browser blocks. The HTML is written into the tab
-   * rather than pointed at a signed URL: storage serves the document as an
-   * attachment, which shows a blank tab and a download instead of the page.
-   */
-  const startWetSignature = () => {
-    const printTab = window.open("about:blank", "_blank")
-
-    changeStatus.mutate(
-      { status: "Menunggu TTD Basah" },
-      {
-        onSuccess: async () => {
-          try {
-            const { html } = await fetchOfficialDocumentHtml(application!.id)
-            writeHtmlToTab(html, printTab)
-          } catch (openError) {
-            printTab?.close()
-            setError(
-              `Status sudah diperbarui, tapi dokumen gagal dibuka: ${errorText(openError)}`
-            )
-          }
-        },
-        onError: () => printTab?.close(),
-      }
-    )
-  }
-
   if (!application) return null
 
   const profile = application.profiles
   const sisaKontrak = remainingContract(application.contract_end)
-  const busy =
-    generate.isPending || changeStatus.isPending || uploadScan.isPending
+  const busy = changeStatus.isPending
 
-  const canGenerate = ["Diajukan", "Diproses Admin", "Ditolak"].includes(
-    application.status
-  )
-  const canSend = ["Diproses Admin", "Ditolak", "Menunggu Review"].includes(
-    application.status
-  )
-  const canStartWetSignature = application.status === "Menunggu Review"
-  const collectingWetSignature = application.status === "Menunggu TTD Basah"
-  // The same rule is enforced by a database trigger; this only keeps the admin
-  // from pressing a button that would fail.
-  const hasSignedScan = Boolean(
-    documents.data?.some((document) => document.kind === "ttd_scan")
-  )
-  const canDisburse = collectingWetSignature && hasSignedScan
+  // Dokumen resmi + email berisi detail & lampiran otomatis terkirim ke pemohon
+  // saat submit — pengajuan langsung 'Menunggu TTD', admin tidak kirim manual.
+  // Admin hanya menunggu scan TTD pemohon ('Menunggu Review') lalu setujui/tolak.
+  const canApprove = application.status === "Menunggu Review"
   const canReject = [
     "Diajukan",
-    "Diproses Admin",
     "Menunggu TTD",
     "Menunggu Review",
-    "Menunggu TTD Basah",
   ].includes(application.status)
   const settled =
     application.status === "Disetujui / Cair" || application.status === "Lunas"
@@ -230,15 +153,15 @@ export function AdminApplicationSheet({
                 <span className="font-medium text-foreground/80">
                   {application.code}
                 </span>
-                <span aria-hidden="true">·</span>
+                <span aria-hidden="true">&middot;</span>
                 <span>{application.jabatan}</span>
                 {profile?.branch ? (
                   <>
-                    <span aria-hidden="true">·</span>
+                    <span aria-hidden="true">&middot;</span>
                     <span>{profile.branch}</span>
                   </>
                 ) : null}
-                <span aria-hidden="true">·</span>
+                <span aria-hidden="true">&middot;</span>
                 <span>Diajukan {formatDate(application.submitted_at)}</span>
               </DialogDescription>
             </div>
@@ -259,7 +182,7 @@ export function AdminApplicationSheet({
                   </p>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {application.tenure_months} bulan ·{" "}
+                  {application.tenure_months} bulan &middot;{" "}
                   {formatCurrency(application.monthly_installment)} / bulan
                 </p>
               </div>
@@ -312,7 +235,7 @@ export function AdminApplicationSheet({
               <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50/70 p-3 text-amber-950 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
                 <CircleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-300" />
                 <p className="text-xs leading-relaxed">
-                  <span className="font-semibold">Pengajuan revisi</span> —
+                  <span className="font-semibold">Pengajuan revisi</span> &mdash;
                   versi perbaikan dari pengajuan sebelumnya yang ditolak.
                 </p>
               </div>
@@ -325,9 +248,6 @@ export function AdminApplicationSheet({
                 description="Diisi sendiri oleh pemohon — cocokkan dengan data kepegawaian."
               />
 
-              {/* Jabatan diisi pemohon sendiri dan menentukan limit pinjaman,
-                  jadi ia ditonjolkan: review admin adalah satu-satunya tahap
-                  yang bisa menangkap klaim jabatan yang keliru. */}
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/40">
                 <div className="min-w-0">
                   <p className="text-xs text-amber-800 dark:text-amber-300/80">
@@ -395,68 +315,13 @@ export function AdminApplicationSheet({
                 <DetailSectionHeading
                   icon={FileText}
                   title="Dokumen"
-                  description="Satu file resmi berisi permohonan, persetujuan, dan penyerahan."
+                  description="Dokumen resmi otomatis dibuat saat pemohon submit."
                 />
                 <DocumentList
                   applicationId={application.id}
-                  emptyLabel="Belum ada dokumen. Klik “Generate dokumen” untuk membuat satu dokumen resmi."
+                  emptyLabel="Dokumen resmi sedang diproses. Muat ulang sebentar lagi."
                 />
-                {canStartWetSignature ? (
-                  <p className="flex items-start gap-2 rounded-2xl bg-background/70 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-                    <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-                    Periksa “Scan TTD pemohon & atasan langsung” dulu: pastikan
-                    tanda tangan pemohon dan kolom “Mengetahui” sudah terisi
-                    sebelum dokumen diedarkan ke manajemen.
-                  </p>
-                ) : null}
               </section>
-
-              {collectingWetSignature ? (
-                <section className="space-y-3 rounded-2xl border border-indigo-200 bg-indigo-50/70 p-4 dark:border-indigo-900/70 dark:bg-indigo-950/30">
-                  <DetailSectionHeading
-                    icon={PenLine}
-                    title="Tanda tangan basah"
-                    description="Kumpulkan tanda tangan wakil ketua, ketua, sekretaris, dan bendahara, lalu unggah hasil scannya."
-                  />
-                  <p className="flex items-start gap-2 rounded-xl bg-background/70 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-                    {hasSignedScan ? (
-                      <>
-                        <BadgeCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />
-                        Scan dokumen lengkap sudah diarsipkan. Dana siap
-                        dicairkan — unggah lagi kalau ada versi perbaikan.
-                      </>
-                    ) : (
-                      <>
-                        <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-                        Dana belum bisa dicairkan sebelum scan dokumen bertanda
-                        tangan lengkap diunggah.
-                      </>
-                    )}
-                  </p>
-                  <input
-                    ref={scanInputRef}
-                    type="file"
-                    accept="application/pdf,image/*"
-                    className="hidden"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0]
-                      event.target.value = ""
-                      if (file) uploadScan.mutate(file)
-                    }}
-                  />
-                  <Button
-                    variant="outline"
-                    className="w-full bg-background/80"
-                    onClick={() => scanInputRef.current?.click()}
-                    disabled={busy}
-                  >
-                    {uploadScan.isPending ? <Spinner /> : <Upload />}
-                    {hasSignedScan
-                      ? "Unggah ulang scan dokumen"
-                      : "Unggah scan dokumen lengkap"}
-                  </Button>
-                </section>
-              ) : null}
 
               <section>
                 <DetailSectionHeading
@@ -524,59 +389,80 @@ export function AdminApplicationSheet({
             </div>
 
             <div className="shrink-0 space-y-2 border-t border-border/70 bg-background/80 px-6 py-4">
-              {canStartWetSignature ? (
-                <Button
-                  className="w-full"
-                  onClick={startWetSignature}
-                  disabled={busy}
-                >
-                  {changeStatus.isPending ? <Spinner /> : <PenLine />}
-                  Lolos review — buka dokumen untuk dicetak
-                </Button>
-              ) : null}
+              {canApprove ? (
+                disbursing ? (
+                  <div className="space-y-5 rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/[0.08] to-transparent p-5 shadow-sm">
+                    <div className="flex items-center gap-3">
+                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/20 text-primary">
+                        <Landmark className="size-5" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold tracking-tight text-foreground">
+                          Instruksi Pencairan
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Lakukan transfer dana ke rekening di bawah ini.
+                        </p>
+                      </div>
+                    </div>
 
-              {collectingWetSignature ? (
-                <Button
-                  className="w-full"
-                  onClick={() =>
-                    changeStatus.mutate({ status: "Disetujui / Cair" })
-                  }
-                  disabled={busy || !canDisburse}
-                >
-                  {changeStatus.isPending ? <Spinner /> : <BadgeCheck />}
-                  {canDisburse
-                    ? "Setujui dan cairkan dana"
-                    : "Cairkan dana (perlu scan dokumen)"}
-                </Button>
-              ) : null}
+                    <div className="overflow-hidden rounded-xl border border-border/60 bg-background/95 shadow-sm backdrop-blur">
+                      <div className="border-b border-border/40 bg-muted/40 px-4 py-3">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          Total Transfer
+                        </p>
+                        <p className="mt-1 text-xl font-bold tracking-tight text-primary tabular-nums">
+                          {formatCurrency(application.net_disbursement)}
+                        </p>
+                      </div>
+                      <div className="space-y-2.5 px-4 py-3.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted-foreground">Bank Tujuan</span>
+                          <span className="text-sm font-semibold">{application.bank_name || "-"}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted-foreground">No. Rekening</span>
+                          <span className="text-sm font-bold tracking-wider tabular-nums">{application.bank_account || "-"}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted-foreground">Atas Nama</span>
+                          <span className="text-sm font-medium">{profile?.full_name || "-"}</span>
+                        </div>
+                      </div>
+                    </div>
 
-              <div className="grid gap-2 sm:grid-cols-2">
-                {canGenerate ? (
+                    <div className="grid gap-2.5 pt-1 sm:grid-cols-2">
+                      <Button
+                        variant="ghost"
+                        onClick={() => setDisbursing(false)}
+                        disabled={busy}
+                        className="hover:bg-background/60"
+                      >
+                        Batal
+                      </Button>
+                      <Button
+                        onClick={() =>
+                          changeStatus.mutate({ status: "Disetujui / Cair" })
+                        }
+                        disabled={busy}
+                        className="shadow-sm"
+                      >
+                        {changeStatus.isPending ? <Spinner /> : <Check />}
+                        Konfirmasi Transfer
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
                   <Button
-                    variant={canSend ? "outline" : "default"}
                     className="w-full"
-                    onClick={() => generate.mutate()}
-                    disabled={busy}
+                    onClick={() => setDisbursing(true)}
+                    disabled={busy || rejecting}
                   >
-                    {generate.isPending ? <Spinner /> : <FileCog />}
-                    Generate dokumen
+                    <Check />
+                    Setujui dan cairkan dana
                   </Button>
-                ) : null}
-
-                {canSend ? (
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() =>
-                      changeStatus.mutate({ status: "Menunggu TTD" })
-                    }
-                    disabled={busy}
-                  >
-                    {changeStatus.isPending ? <Spinner /> : <Send />}
-                    Kirim ke pemohon
-                  </Button>
-                ) : null}
-              </div>
+                )
+              ) : null}
 
               {canReject ? (
                 rejecting ? (
@@ -616,9 +502,9 @@ export function AdminApplicationSheet({
               ) : null}
 
               {settled ? (
-                <p className="rounded-2xl bg-muted/60 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+                <p className="rounded-2xl bg-muted/60 px-4 py-3 text-center text-xs text-muted-foreground">
                   Kasbon sudah dicairkan. Kelola pemotongan gaji dari menu Kartu
-                  piutang — status Lunas terbentuk otomatis saat seluruh
+                  piutang &mdash; status Lunas terbentuk otomatis saat seluruh
                   angsuran ditandai.
                 </p>
               ) : null}
@@ -657,9 +543,6 @@ function DetailSectionHeading({
 }
 
 const STATUS_MESSAGES: Partial<Record<Application["status"], string>> = {
-  "Menunggu TTD": "Dokumen dikirim ke pemohon. Notifikasi email menyusul.",
-  "Menunggu TTD Basah":
-    "Dokumen dibuka di tab baru. Cetak, kumpulkan tanda tangan basah, lalu unggah scannya.",
   "Disetujui / Cair":
     "Kasbon disetujui. Kartu piutang dan jadwal angsuran otomatis dibuat.",
   Ditolak: "Pengajuan ditolak. Pemohon dapat merevisi dan mengajukan ulang.",

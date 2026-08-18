@@ -24,11 +24,37 @@ const MAX_ATTEMPTS = 3
 
 type Notification = {
   id: string
+  application_id: string | null
   type: string
   title: string
   body: string
   email_to: string
   attempts: number
+}
+
+type Application = {
+  code: string
+  amount: number
+  tenure_months: number
+  monthly_installment: number
+  provisi_fee: number
+  monthly_admin_fee: number
+  net_disbursement: number
+  reason_category: string
+  reason_detail: string | null
+  contract_start: string
+  contract_end: string
+  phone: string
+  family_phone: string
+  submitted_at: string
+}
+
+type KasbonDocument = {
+  id: string
+  bucket: string
+  object_key: string
+  file_name: string | null
+  mime_type: string | null
 }
 
 function json(payload: unknown, status = 200) {
@@ -46,10 +72,71 @@ function escapeHtml(value: string) {
     .replace(/"/g, "&quot;")
 }
 
-function renderEmail(notification: Notification, appUrl: string) {
+function rupiah(value: number | string | null | undefined) {
+  const n = Number(value ?? 0)
+  return "Rp " + n.toLocaleString("id-ID", { maximumFractionDigits: 0 })
+}
+
+const MONTHS = [
+  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+]
+
+function tanggal(value: string | null | undefined) {
+  if (!value) return "-"
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return "-"
+  return d.getDate() + " " + MONTHS[d.getMonth()] + " " + d.getFullYear()
+}
+
+function renderEmail(notification: Notification, appUrl: string, app?: Application | null) {
   const ctaLabel = notification.type === "pengajuan_baru" || notification.type === "ttd_diterima"
     ? "Buka dashboard admin"
     : "Buka dashboard Kasbonku"
+
+  // For pengajuan_terkirim, include application details in the email
+  if (notification.type === "pengajuan_terkirim" && app) {
+    return `<!doctype html>
+<html lang="id">
+  <body style="margin:0;padding:24px;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:16px;border:1px solid #e5e7eb;">
+      <tr>
+        <td style="padding:24px 28px 8px;">
+          <p style="margin:0;font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#167c6e;">Kasbonku &middot; ABS Group</p>
+          <h1 style="margin:12px 0 0;font-size:19px;line-height:1.4;font-weight:600;">${escapeHtml(notification.title)}</h1>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:12px 28px 20px;">
+          <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#374151;">${escapeHtml(notification.body)}</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border-radius:12px;padding:16px;margin-bottom:16px;">
+            <tr><td style="padding:8px 0;font-size:14px;color:#6b7280;">Nomor Pengajuan</td><td style="padding:8px 0;font-size:14px;font-weight:600;text-align:right;">${escapeHtml(app.code)}</td></tr>
+            <tr><td style="padding:8px 0;font-size:14px;color:#6b7280;">Nominal Pengajuan</td><td style="padding:8px 0;font-size:14px;font-weight:600;text-align:right;">${rupiah(app.amount)}</td></tr>
+            <tr><td style="padding:8px 0;font-size:14px;color:#6b7280;">Jangka Waktu</td><td style="padding:8px 0;font-size:14px;font-weight:600;text-align:right;">${app.tenure_months} bulan</td></tr>
+            <tr><td style="padding:8px 0;font-size:14px;color:#6b7280;">Angsuran per Bulan</td><td style="padding:8px 0;font-size:14px;font-weight:600;text-align:right;">${rupiah(app.monthly_installment)}</td></tr>
+            <tr><td style="padding:8px 0;font-size:14px;color:#6b7280;">Provisi 1,5%</td><td style="padding:8px 0;font-size:14px;font-weight:600;text-align:right;">${rupiah(app.provisi_fee)}</td></tr>
+            <tr><td style="padding:8px 0;font-size:14px;color:#6b7280;">Admin Bulanan 1%</td><td style="padding:8px 0;font-size:14px;font-weight:600;text-align:right;">${rupiah(app.monthly_admin_fee)}</td></tr>
+            <tr><td style="padding:8px 0;font-size:14px;color:#6b7280;border-top:1px solid #e5e7eb;">Dana Cair</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:#167c6e;border-top:1px solid #e5e7eb;">${rupiah(app.net_disbursement)}</td></tr>
+            <tr><td style="padding:8px 0;font-size:14px;color:#6b7280;">Alasan</td><td style="padding:8px 0;font-size:14px;font-weight:600;text-align:right;">${escapeHtml(app.reason_category)}</td></tr>
+            <tr><td style="padding:8px 0;font-size:14px;color:#6b7280;">Masa Kontrak</td><td style="padding:8px 0;font-size:14px;font-weight:600;text-align:right;">${tanggal(app.contract_start)} – ${tanggal(app.contract_end)}</td></tr>
+          </table>
+          <p style="margin:0;font-size:14px;line-height:1.6;color:#374151;">Dokumen resmi pengajuan kamu terlampir di email ini. Cetak dokumennya, tandatangani secara manual (Pemohon &amp; Atasan Langsung), lalu unggah hasil scan-nya melalui dashboard Kasbonku.</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:0 28px 28px;">
+          <a href="${escapeHtml(appUrl)}" style="display:inline-block;background:#167c6e;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:11px 20px;border-radius:999px;">${ctaLabel}</a>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:16px 28px 24px;border-top:1px solid #f3f4f6;">
+          <p style="margin:0;font-size:12px;line-height:1.6;color:#9ca3af;">Email otomatis dari sistem Kasbonku. Mohon tidak membalas email ini.</p>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`
+  }
 
   return `<!doctype html>
 <html lang="id">
@@ -81,28 +168,89 @@ function renderEmail(notification: Notification, appUrl: string) {
 </html>`
 }
 
+async function fetchApplicationAndDocument(
+  admin: any,
+  applicationId: string
+): Promise<{ app: Application | null; doc: KasbonDocument | null }> {
+  try {
+    const { data: app } = await admin.database
+      .from("applications")
+      .select("code, amount, tenure_months, monthly_installment, provisi_fee, monthly_admin_fee, net_disbursement, reason_category, reason_detail, contract_start, contract_end, phone, family_phone, submitted_at")
+      .eq("id", applicationId)
+      .maybeSingle()
+
+    if (!app) return { app: null, doc: null }
+
+    const { data: documents } = await admin.database
+      .from("documents")
+      .select("id, bucket, object_key, file_name, mime_type")
+      .eq("application_id", applicationId)
+      .eq("kind", "permohonan")
+      .eq("mime_type", "text/html")
+      .limit(1)
+
+    const doc = (documents ?? []).length > 0 ? (documents[0] as KasbonDocument) : null
+    return { app: app as Application, doc }
+  } catch {
+    return { app: null, doc: null }
+  }
+}
+
+async function downloadDocument(
+  admin: any,
+  doc: KasbonDocument
+): Promise<{ content: string; filename: string } | null> {
+  try {
+    const { data, error } = await admin.storage
+      .from(doc.bucket)
+      .download(doc.object_key)
+    if (error || !data) return null
+    const text = await data.text()
+    const filename = doc.file_name ?? "dokumen-kasbon.html"
+    return { content: text, filename }
+  } catch {
+    return null
+  }
+}
+
 async function sendViaResend(
   apiKey: string,
   from: string,
   notification: Notification,
   appUrl: string,
+  attachment?: { filename: string; content: string } | null,
 ) {
+  const emailBody: Record<string, unknown> = {
+    from,
+    to: [notification.email_to],
+    subject: notification.title,
+    text: `${notification.title}\n\n${notification.body}\n\n${appUrl}`,
+    html: renderEmail(notification, appUrl),
+  }
+
+  if (attachment) {
+    // Resend accepts base64-encoded content for attachments. `btoa` is
+    // Latin-1 only and throws on non-ASCII (e.g. en-dashes in the document),
+    // so encode the UTF-8 bytes explicitly.
+    const bytes = new TextEncoder().encode(attachment.content)
+    let binary = ""
+    for (const byte of bytes) binary += String.fromCharCode(byte)
+    emailBody.attachments = [
+      {
+        filename: attachment.filename,
+        content: btoa(binary),
+      },
+    ]
+  }
+
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      // The notification id is stable across retries, so a row that already
-      // went out cannot be delivered twice if this run is repeated.
       "Idempotency-Key": notification.id,
     },
-    body: JSON.stringify({
-      from,
-      to: [notification.email_to],
-      subject: notification.title,
-      text: `${notification.title}\n\n${notification.body}\n\n${appUrl}`,
-      html: renderEmail(notification, appUrl),
-    }),
+    body: JSON.stringify(emailBody),
   })
 
   if (!response.ok) {
@@ -150,7 +298,7 @@ export default async function (req: Request): Promise<Response> {
 
   const { data: pending, error: readError } = await admin.database
     .from("notifications")
-    .select("id, type, title, body, email_to, attempts")
+    .select("id, application_id, type, title, body, email_to, attempts")
     .eq("email_status", "pending")
     .lt("attempts", MAX_ATTEMPTS)
     .order("created_at", { ascending: true })
@@ -198,7 +346,22 @@ export default async function (req: Request): Promise<Response> {
 
   for (const notification of queue) {
     try {
-      await sendViaResend(apiKey, from, notification, appUrl)
+      // For pengajuan_terkirim, fetch application details and attach the document
+      let attachment: { filename: string; content: string } | null = null
+      let app: Application | null = null
+
+      if (notification.type === "pengajuan_terkirim" && notification.application_id) {
+        const result = await fetchApplicationAndDocument(admin, notification.application_id)
+        app = result.app
+        if (result.doc) {
+          const downloaded = await downloadDocument(admin, result.doc)
+          if (downloaded) {
+            attachment = downloaded
+          }
+        }
+      }
+
+      await sendViaResend(apiKey, from, notification, appUrl, attachment)
       await admin.database
         .from("notifications")
         .update({

@@ -89,19 +89,27 @@ function Workspace({ profile }: { profile: Profile }) {
     []
   )
 
+  // Polling 30 detik menjaga kartu "Progress Pengajuan" dan daftar tetap segar
+  // saat admin mengubah status dari sesi lain. (Realtime WebSocket bisa
+  // menggantikan polling ini bila channel pattern backend sudah dikonfigurasi.)
+  const REFRESH_MS = 30_000
+
   const applications = useQuery({
     queryKey: ["applications", isAdmin ? "all" : profile.id],
     queryFn: () => (isAdmin ? fetchAllApplications() : fetchMyApplications(profile.id)),
+    refetchInterval: REFRESH_MS,
   })
 
   const receivables = useQuery({
     queryKey: ["receivables", isAdmin ? "all" : profile.id],
     queryFn: () => (isAdmin ? fetchAllReceivables() : fetchMyReceivables(profile.id)),
+    refetchInterval: REFRESH_MS,
   })
 
   const stats = useQuery({
     queryKey: ["stats", profile.id],
     queryFn: fetchDashboardStats,
+    refetchInterval: REFRESH_MS,
   })
 
   // The open sheet/dialog holds a snapshot; re-read it from the refetched list
@@ -123,7 +131,7 @@ function Workspace({ profile }: { profile: Profile }) {
 
   const pendingCount = isAdmin
     ? applicationList.filter((item) =>
-        ["Diajukan", "Diproses Admin", "Menunggu Review"].includes(item.status)
+        ["Diajukan", "Menunggu Review"].includes(item.status)
       ).length
     : applicationList.filter(
         (item) => item.status === "Menunggu TTD" || item.status === "Ditolak"
@@ -198,9 +206,9 @@ function Workspace({ profile }: { profile: Profile }) {
         }}
         pendingCount={pendingCount}
       />
-      <SidebarInset className="min-h-svh bg-muted/30">
+      <SidebarInset className="min-h-svh min-w-0 bg-muted/30">
         <AppHeader role={profile.role} />
-        <main className="mx-auto flex w-full max-w-[1540px] flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <main className="mx-auto flex w-full min-w-0 max-w-[1540px] flex-1 flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
           {notice ? (
             <div
               role="status"

@@ -75,8 +75,10 @@ export type ProfileInput = {
   join_date: string | null
   contract_start: string
   contract_end: string
-  phone: string
-  family_phone: string
+  phone?: string
+  family_phone?: string
+  bank_name?: string
+  bank_account?: string
 }
 
 export async function updateProfile(
@@ -171,6 +173,70 @@ export async function createApplication(
       .single(),
     "Pengajuan"
   )
+}
+
+export type SubmitApplicationInput = {
+  full_name: string
+  jabatan: Jabatan
+  branch: string | null
+  join_date: string | null
+  contract_start: string
+  contract_end: string
+  phone: string
+  family_phone: string
+  bank_name: string
+  bank_account: string
+  amount: number
+  tenure_months: number
+  reason_category: ReasonCategory
+  reason_detail: string | null
+  revision_of?: string | null
+}
+
+/**
+ * Submits an application the way the simplified flow expects: the profile and
+ * the application land in one transaction (`submit_application` RPC), the
+ * official document is generated straight away as the applicant, and the outbox
+ * is nudged so the confirmation email goes out at once. Used by the first-time
+ * combined form, later submissions, and revisions alike.
+ *
+ * Document generation is best-effort: the application is already committed by
+ * the RPC, so a transient edge-function failure is swallowed here and left for
+ * the admin to regenerate rather than surfaced as a failed submission.
+ */
+export async function submitApplication(
+  input: SubmitApplicationInput
+): Promise<Application> {
+  const { data, error } = await insforge.database.rpc("submit_application", {
+    p_full_name: input.full_name,
+    p_jabatan: input.jabatan,
+    p_branch: input.branch,
+    p_join_date: input.join_date,
+    p_contract_start: input.contract_start,
+    p_contract_end: input.contract_end,
+    p_phone: input.phone,
+    p_family_phone: input.family_phone,
+    p_amount: input.amount,
+    p_tenure_months: input.tenure_months,
+    p_reason_category: input.reason_category,
+    p_bank_name: input.bank_name,
+    p_bank_account: input.bank_account,
+    p_reason_detail: input.reason_detail,
+    p_revision_of: input.revision_of ?? null,
+  })
+  if (error) throw new Error(error.message)
+  const application = (Array.isArray(data) ? data[0] : data) as Application | null
+  if (!application) throw new Error("Gagal menyimpan pengajuan.")
+
+  try {
+    await generateDocuments(application.id)
+  } catch {
+    // Dokumen resmi bisa dibuat ulang admin dari detail pengajuan; pengajuannya
+    // sendiri sudah tersimpan, jadi kegagalan di sini tidak membatalkan submit.
+  }
+  void flushNotifications()
+
+  return application
 }
 
 export async function updateApplication(
@@ -275,65 +341,6 @@ export async function generateDocuments(applicationId: string) {
   return payload
 }
 
-/** The empty slot a freshly generated document leaves for the applicant. */
-const SIGNATURE_MARKER = "<!-- SIGNATURE:PEMOHON -->"
-/** What a signed document carries instead — matched again so re-signing works. */
-const SIGNATURE_SLOT = /<span class="signature-slot">[\s\S]*?<\/span>/g
-
-/**
- * Inserts the drawn signature into the generated HTML document in place.
- *
- * The signature lands inside a `signature-slot` wrapper rather than replacing
- * the marker outright, so signing again — after admin sends the document back,
- * or after a wobbly first attempt — swaps the image instead of stacking a
- * second one next to it.
- */
-export async function signGeneratedDocument(
-  application: Application,
-  signature: Blob
-) {
-  const documents = await fetchDocuments(application.id)
-  const generated = documents.find(
-    (document) =>
-      document.kind === "permohonan" && document.mime_type === "text/html"
-  )
-  if (!generated) {
-    throw new Error("Dokumen kasbon belum disiapkan admin.")
-  }
-
-  const { data: template, error: downloadError } = await insforge.storage
-    .from(generated.bucket)
-    .download(generated.object_key)
-  if (downloadError) throw new Error(downloadError.message)
-  if (!template) throw new Error("Dokumen kasbon tidak dapat dibuka.")
-
-  const html = await template.text()
-  const alreadySigned = html.includes('class="signature-slot"')
-  if (!alreadySigned && !html.includes(SIGNATURE_MARKER)) {
-    throw new Error("Area tanda tangan pada dokumen tidak ditemukan.")
-  }
-
-  const signatureDataUrl = await blobToDataUrl(signature)
-  const slot =
-    '<span class="signature-slot"><img class="signature-image" src="' +
-    signatureDataUrl +
-    '" alt="Tanda tangan pemohon" /></span>'
-  const signedHtml = alreadySigned
-    ? html.replace(SIGNATURE_SLOT, slot)
-    : html.split(SIGNATURE_MARKER).join(slot)
-
-  const fileName =
-    generated.file_name ?? `dokumen-kasbon-${application.code}.html`
-  const signedFile = new File([signedHtml], fileName, { type: "text/html" })
-
-  const { error: uploadError } = await insforge.storage
-    .from(generated.bucket)
-    .upload(generated.object_key, signedFile)
-  if (uploadError) throw new Error(uploadError.message)
-
-  return generated
-}
-
 /** Opens a stored document in a new tab through a short-lived signed URL. */
 export async function openDocument(doc: KasbonDocument, tab?: Window | null) {
   const url = await documentUrl(doc)
@@ -352,16 +359,13 @@ export async function fetchOfficialDocument(applicationId: string) {
 }
 
 /**
- * The official document's HTML plus whether the applicant already embedded
- * their digital signature. Downloading the file directly — instead of opening
- * the signed URL — sidesteps storage serving `text/html` as an attachment,
- * which renders as a blank tab and a download. It also lets the signing wizard
- * resume: a signed document means the applicant only has the paper round-trip
- * left, so the flow can skip straight to printing.
+ * The official document's HTML, fetched directly instead of through a signed
+ * URL — storage serves `text/html` as an attachment, which renders as a blank
+ * tab and a download. Used to open the print-ready document for the applicant.
  */
 export async function fetchOfficialDocumentHtml(
   applicationId: string
-): Promise<{ official: KasbonDocument; html: string; signed: boolean }> {
+): Promise<{ official: KasbonDocument; html: string }> {
   const official = await fetchOfficialDocument(applicationId)
   const { data, error } = await insforge.storage
     .from(official.bucket)
@@ -370,7 +374,7 @@ export async function fetchOfficialDocumentHtml(
   if (!data) throw new Error("Dokumen kasbon tidak dapat dibuka.")
 
   const html = await data.text()
-  return { official, html, signed: html.includes('class="signature-slot"') }
+  return { official, html }
 }
 
 /** Downloads a specific stored document's text so it can be rendered inline. */
@@ -465,16 +469,6 @@ async function uploadScanDocument(
   )
 }
 
-function blobToDataUrl(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(String(reader.result))
-    reader.onerror = () =>
-      reject(new Error("Tanda tangan tidak dapat diproses."))
-    reader.readAsDataURL(blob)
-  })
-}
-
 // ---------------------------------------------------------------------------
 // Receivables & installments
 // ---------------------------------------------------------------------------
@@ -511,6 +505,23 @@ export async function fetchInstallments(
       .from("installments")
       .select("*")
       .eq("receivable_id", receivableId)
+      .order("month_no", { ascending: true })
+  )
+}
+
+/**
+ * Loads every installment for many cards in one round-trip — the grid view
+ * renders all cards at once, so per-card fetches would fan out badly.
+ */
+export async function fetchInstallmentsFor(
+  receivableIds: string[]
+): Promise<Installment[]> {
+  if (receivableIds.length === 0) return []
+  return list(
+    await insforge.database
+      .from("installments")
+      .select("*")
+      .in("receivable_id", receivableIds)
       .order("month_no", { ascending: true })
   )
 }

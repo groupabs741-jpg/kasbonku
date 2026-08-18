@@ -8,8 +8,6 @@ import {
   Clock3,
   FileCheck2,
   FilePlus2,
-  PenLine,
-  RefreshCcw,
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 
@@ -19,6 +17,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Spinner } from "@/components/ui/spinner"
 import { initialsOf } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { PROGRESS_STEPS, progressStepIndex } from "@/lib/kasbon"
 import type { ApplicationStatus } from "@/lib/kasbon"
 
 export const fieldClassName =
@@ -35,11 +34,6 @@ const STATUS_CONFIG: Record<
     className:
       "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300",
   },
-  "Diproses Admin": {
-    icon: RefreshCcw,
-    className:
-      "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900 dark:bg-violet-950/40 dark:text-violet-300",
-  },
   "Menunggu TTD": {
     icon: FileCheck2,
     className:
@@ -49,11 +43,6 @@ const STATUS_CONFIG: Record<
     icon: Clock3,
     className:
       "border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900 dark:bg-orange-950/40 dark:text-orange-300",
-  },
-  "Menunggu TTD Basah": {
-    icon: PenLine,
-    className:
-      "border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900 dark:bg-indigo-950/40 dark:text-indigo-300",
   },
   Ditolak: {
     icon: CircleX,
@@ -204,6 +193,8 @@ export function Metric({
   )
 }
 
+// The vertical case-file timeline maps one entry per canonical progress step,
+// but spells out what happens inside the signing step for the applicant.
 const TIMELINE_STEPS: {
   label: string
   description: string
@@ -211,17 +202,12 @@ const TIMELINE_STEPS: {
 }[] = [
   {
     label: "Pengajuan diterima",
-    description: "Form berhasil dikirim ke admin",
+    description: "Form terkirim, dokumen resmi otomatis dibuat",
     statuses: ["Diajukan"],
   },
   {
-    label: "Diproses admin",
-    description: "Admin menyiapkan dokumen resmi",
-    statuses: ["Diproses Admin"],
-  },
-  {
     label: "Menunggu tanda tangan",
-    description: "Pemohon TTD, cetak, lalu minta TTD basah atasan langsung",
+    description: "Admin kirim dokumen; pemohon TTD, cetak, minta TTD basah atasan langsung, unggah scan",
     statuses: ["Menunggu TTD"],
   },
   {
@@ -230,16 +216,94 @@ const TIMELINE_STEPS: {
     statuses: ["Menunggu Review"],
   },
   {
-    label: "Tanda tangan manajemen",
-    description: "Dokumen diedarkan ke wakil ketua, ketua, sekretaris, bendahara",
-    statuses: ["Menunggu TTD Basah"],
-  },
-  {
     label: "Dana dicairkan",
-    description: "Kasbon masuk tracking angsuran",
+    description: "Kasbon disetujui dan masuk tracking angsuran",
     statuses: ["Disetujui / Cair", "Lunas"],
   },
 ]
+
+/**
+ * Horizontal stepper untuk kartu "Progress Pengajuan" (pemohon) dan ringkasan
+ * admin — dua sisi membaca PROGRESS_STEPS yang sama supaya alurnya konsisten.
+ */
+export function ProgressStepper({ status }: { status: ApplicationStatus }) {
+  const activeIndex = progressStepIndex(status)
+  const isRejected = status === "Ditolak"
+  const isSettled = status === "Lunas"
+
+  return (
+    <ol className="flex items-start">
+      {PROGRESS_STEPS.map((step, index) => {
+        const state =
+          isSettled || index < activeIndex || (status === "Disetujui / Cair" && index === activeIndex)
+            ? "done"
+            : index === activeIndex
+              ? isRejected
+                ? "rejected"
+                : "current"
+              : "pending"
+        const isLast = index === PROGRESS_STEPS.length - 1
+
+        return (
+          <li key={step.key} className="flex min-w-0 flex-1 flex-col items-center">
+            <div className="flex w-full items-center">
+              <span
+                className={cn(
+                  "h-0.5 flex-1",
+                  index === 0
+                    ? "bg-transparent"
+                    : index <= activeIndex && !isRejected
+                      ? "bg-primary"
+                      : "bg-border"
+                )}
+              />
+              <span
+                className={cn(
+                  "grid size-7 shrink-0 place-items-center rounded-full border text-xs font-semibold",
+                  state === "done" &&
+                    "border-primary bg-primary text-primary-foreground",
+                  state === "current" &&
+                    "border-primary bg-primary/10 text-primary",
+                  state === "pending" &&
+                    "border-border bg-muted text-muted-foreground",
+                  state === "rejected" &&
+                    "border-red-300 bg-red-50 text-red-600 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
+                )}
+              >
+                {state === "done" ? (
+                  <Check className="size-3.5" />
+                ) : state === "rejected" ? (
+                  <CircleX className="size-3.5" />
+                ) : (
+                  index + 1
+                )}
+              </span>
+              <span
+                className={cn(
+                  "h-0.5 flex-1",
+                  isLast
+                    ? "bg-transparent"
+                    : index < activeIndex && !isRejected
+                      ? "bg-primary"
+                      : "bg-border"
+                )}
+              />
+            </div>
+            <span
+              className={cn(
+                "mt-2 px-1 text-center text-[11px] leading-tight font-medium",
+                state === "pending" ? "text-muted-foreground" : "text-foreground",
+                state === "rejected" && "text-red-600 dark:text-red-300"
+              )}
+            >
+              {isRejected && index === activeIndex ? "Ditolak" : step.label}
+            </span>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
 
 export function StatusTimeline({ status }: { status: ApplicationStatus }) {
   // "Ditolak" is off the happy path: show the flow stalled at review.
@@ -256,7 +320,7 @@ export function StatusTimeline({ status }: { status: ApplicationStatus }) {
     <div className="space-y-4">
       {TIMELINE_STEPS.map((step, index) => {
         const state =
-          isSettled || index < resolvedIndex
+          isSettled || index < resolvedIndex || (status === "Disetujui / Cair" && index === resolvedIndex)
             ? "done"
             : index === resolvedIndex
               ? "current"

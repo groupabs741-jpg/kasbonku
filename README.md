@@ -42,9 +42,20 @@ Sistem mendukung banyak admin setara (PRD 3.1).
 
 ## Bagaimana karyawan masuk
 
-Tidak ada pendaftaran manual. Siapa pun yang **Sign in with Google** langsung
-mendapat profil `pemohon` lewat `ensure_profile()`, lalu diminta melengkapi
-jabatan, cabang, masa kontrak, dan dua nomor telepon sebelum dashboard terbuka.
+Tidak ada pendaftaran manual dan tidak ada halaman "Lengkapi Profil" yang
+berdiri sendiri. Siapa pun yang **Sign in with Google** langsung mendapat
+profil `pemohon` lewat `ensure_profile()`, lalu diarahkan ke form **"Isi Data
+Diri"** yang sekaligus menjadi pengajuan kasbon pertama: field profil (Nama,
+Jabatan, Join Date, Masa Kontrak, No. Telp, No. Telp Keluarga) digabung dengan
+field pengajuan (Nominal, Jangka Waktu, Alasan) dalam satu form. Submit ke RPC
+`submit_application()` menulis profil + pengajuan dalam satu transaksi, lalu
+sistem otomatis generate dokumen resmi dan mengirim email konfirmasi berisi
+detail pengajuan + lampiran dokumen — tanpa menunggu aksi admin. Setelah itu
+baru dashboard terbuka.
+
+Pengajuan berikutnya tidak membuka form panjang lagi: data diri auto-terisi
+dari profil (tetap bisa diedit, misal kontrak diperpanjang), pemohon cukup
+mengisi ulang nominal, jangka waktu, dan alasan.
 
 ⚠️ **Jabatan diisi sendiri oleh pemohon, padahal jabatan menentukan limit
 pinjaman** (Rp 3/4/6 juta, PRD 4.2). Seseorang bisa memilih "SPV/Manager" untuk
@@ -72,7 +83,7 @@ src/
     format.ts     format rupiah / tanggal Indonesia
   components/
     session-provider.tsx   auth state, ensure_profile, sign in/out
-    kasbon-dashboard.tsx   orchestrator: login → setup profil → workspace
+    kasbon-dashboard.tsx   orchestrator: login → Isi Data Diri (pengajuan pertama) → workspace
     kasbon/                seluruh layar & dialog
 functions/        edge function (Deno) — di-deploy lewat InsForge CLI
 migrations/       skema database, urut berdasarkan timestamp
@@ -106,8 +117,10 @@ scripts/          tooling operator
   `Menunggu TTD → Menunggu Review`, itu pun setelah scan `ttd_pemohon` yang
   lebih baru dari `document_sent_at` masuk; sisanya milik admin.
 - **Bukti tanda tangan** — `guard_document_insert()`: pemohon hanya boleh
-  mengunggah `ttd_pemohon` dan hanya saat status `Menunggu TTD`. `ttd_scan`
-  (dokumen lengkap yang membuka pencairan) milik admin.
+  mengunggah `ttd_pemohon` (scan dokumen bertanda tangan pemohon + atasan
+  langsung) dan hanya saat status `Menunggu TTD`. Kolom manajemen (Wakil
+  Ketua/Ketua/Sekretaris/Bendahara) dibubuhkan di luar sistem sebagai formalitas
+  dokumen, jadi tidak ada lagi gerbang `ttd_scan` sebelum pencairan.
 - **Lunas** — dihitung dari baris angsuran, tidak pernah diketik. Menandai
   seluruh angsuran otomatis mengubah kartu piutang **dan** status pengajuan;
   membatalkan satu baris membukanya kembali.
@@ -135,7 +148,7 @@ yang sudah dikirim.
 
 | Slug | Fungsi |
 |---|---|
-| `generate-documents` | membuat satu dokumen gabungan Permohonan / Persetujuan / Penyerahan (admin) |
+| `generate-documents` | membuat satu dokumen gabungan Permohonan / Persetujuan / Penyerahan — dipanggil otomatis saat pemohon submit (pemilik aplikasi); admin boleh generate ulang sebagai fallback |
 | `export-report` | export XLSX: rekap pengajuan, kartu piutang, biaya admin (admin) |
 | `notifications-dispatch` | mengirim antrean notifikasi via Resend |
 | `installment-reminders` | menjadwalkan reminder angsuran H-3 |
@@ -167,18 +180,17 @@ npx -y @insforge/cli db migrations up --all
 Satu dokumen gabungan dihasilkan sebagai **HTML siap cetak A4**, bukan PDF:
 formatnya mengikuti formulir kertas ABS Group yang sudah ada, memuat bagian
 Permohonan, Persetujuan, dan Penyerahan, serta bisa disimpan sebagai PDF dari
-browser mana pun (tombol "Cetak / Simpan PDF" ada di dokumennya). Tanda tangan
-digital pemohon ditempatkan langsung pada file yang sama, di dalam pembungkus
-`<span class="signature-slot">` supaya tanda tangan ulang menimpa gambar lama,
-bukan menumpuknya.
+browser mana pun (tombol "Cetak / Simpan PDF" ada di dokumennya).
 
-Kolom "Mengetahui / Atasan Langsung" ditandatangani **basah**: pemohon mencetak
-dokumen yang sudah ada tanda tangan digitalnya, meminta tanda tangan atasan
-langsung, lalu mengunggah scan-nya (`ttd_pemohon`) sebelum admin mereview.
+**Tidak ada tanda tangan digital di sistem.** Dokumen dikirim ke pemohon lewat
+email (lampiran) begitu pengajuan disubmit; pemohon mencetaknya, membubuhkan
+semua tanda tangan secara manual (Pemohon + Atasan Langsung), lalu mengunggah
+hasil scan-nya (`ttd_pemohon`) sebelum admin mereview.
 
-Kolom Wakil Ketua, Ketua, Sekretaris, dan Bendahara dikumpulkan admin setelah
-review, pada tahap `Menunggu TTD Basah` — scan lengkapnya (`ttd_scan`) adalah
-syarat pencairan (PRD 10.1).
+Kolom Wakil Ketua, Ketua, Sekretaris, dan Bendahara tetap ada di cetakan
+dokumen sesuai formulir resmi ABS Group, tapi dibubuhkan secara manual/offline
+oleh admin sebagai formalitas dokumen — tidak ada lagi tahap `Menunggu TTD
+Basah` di dalam sistem.
 
 ---
 

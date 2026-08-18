@@ -173,6 +173,19 @@
   background: color-mix(in oklch, var(--primary), transparent 78%);
 }
 
+/* Latar baris ringkasan grid Kartu Piutang — OPAK (di-mix dengan --card, bukan
+   transparent) supaya kolom beku BATCH/NO/NAMA tidak tertembus/tertimpa kolom
+   lain saat di-scroll horizontal. Otomatis ikut tema (light/dark) via var. */
+.kasbon-piutang-total {
+  background-color: color-mix(in oklch, var(--primary) 10%, var(--card));
+}
+.kasbon-piutang-subtotal {
+  background-color: color-mix(in oklch, var(--primary) 5%, var(--card));
+}
+.kasbon-piutang-batch {
+  background-color: color-mix(in oklch, var(--muted) 60%, var(--card));
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
