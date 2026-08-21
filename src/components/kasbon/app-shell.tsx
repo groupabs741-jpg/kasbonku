@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   LogOut,
   Moon,
+  NotebookPen,
   ReceiptText,
   Settings2,
   Sun,
@@ -53,6 +54,7 @@ export type SectionKey =
   | "angsuran"
   | "dokumen"
   | "piutang"
+  | "pencatatan"
   | "laporan"
   | "pengaturan"
 
@@ -67,6 +69,7 @@ const ADMIN_NAV: { label: string; section: SectionKey; icon: LucideIcon }[] = [
   { label: "Ringkasan", section: "overview", icon: LayoutDashboard },
   { label: "Semua pengajuan", section: "pengajuan", icon: ClipboardCheck },
   { label: "Kartu piutang", section: "piutang", icon: WalletCards },
+  { label: "Pencatatan", section: "pencatatan", icon: NotebookPen },
   { label: "Laporan", section: "laporan", icon: FileSpreadsheet },
 ]
 

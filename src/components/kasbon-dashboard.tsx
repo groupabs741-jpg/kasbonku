@@ -18,6 +18,7 @@ import {
 } from "@/components/kasbon/applicant-sections"
 import {
   AdminApplications,
+  AdminLedger,
   AdminOverview,
   AdminReceivables,
   AdminReports,
@@ -164,6 +165,8 @@ function Workspace({ profile }: { profile: Profile }) {
           )
         case "piutang":
           return <AdminReceivables data={adminData} onNotify={showNotice} />
+        case "pencatatan":
+          return <AdminLedger data={adminData} onNotify={showNotice} />
         case "laporan":
           return <AdminReports data={adminData} onNotify={showNotice} />
         default:

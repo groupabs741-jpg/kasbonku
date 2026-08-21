@@ -186,6 +186,19 @@
   background-color: color-mix(in oklch, var(--muted) 60%, var(--card));
 }
 
+/* Kolom buku kas "Pencatatan" — tiga blok warna ala Excel: kas masuk (amber),
+   kas keluar (hijau), saldo berjalan (pink). OPAK (di-mix dengan --card) supaya
+   header sticky tak tertembus baris saat di-scroll, dan ikut tema via --card. */
+.kasbon-ledger-in {
+  background-color: color-mix(in oklch, oklch(0.83 0.13 85) 20%, var(--card));
+}
+.kasbon-ledger-out {
+  background-color: color-mix(in oklch, oklch(0.82 0.14 150) 20%, var(--card));
+}
+.kasbon-ledger-saldo {
+  background-color: color-mix(in oklch, oklch(0.8 0.11 350) 24%, var(--card));
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

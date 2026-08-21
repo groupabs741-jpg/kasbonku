@@ -3,6 +3,9 @@ import type {
   Application,
   ApplicationEvent,
   ApplicationStatus,
+  CashDirection,
+  CashEntry,
+  CashEntryKind,
   DashboardStats,
   DocumentKind,
   Installment,
@@ -546,6 +549,67 @@ export async function setInstallmentStatus(options: {
       .single(),
     "Angsuran"
   )
+}
+
+// ---------------------------------------------------------------------------
+// Cash entries (buku kas manual — sheet "Pencatatan")
+// ---------------------------------------------------------------------------
+
+/** Baris manual buku kas, urut naik per tanggal lalu waktu buat (stabil). */
+export async function fetchCashEntries(): Promise<CashEntry[]> {
+  return list(
+    await insforge.database
+      .from("cash_entries")
+      .select("*")
+      .order("entry_date", { ascending: true })
+      .order("created_at", { ascending: true })
+  )
+}
+
+export type CashEntryInput = {
+  entry_date: string
+  description: string
+  kind: CashEntryKind
+  direction: CashDirection
+  amount: number
+  note?: string | null
+  created_by?: string | null
+}
+
+export async function createCashEntry(
+  input: CashEntryInput
+): Promise<CashEntry> {
+  return required<CashEntry>(
+    await insforge.database
+      .from("cash_entries")
+      .insert([input])
+      .select("*")
+      .single(),
+    "Catatan kas"
+  )
+}
+
+export async function updateCashEntry(
+  id: string,
+  patch: Partial<CashEntryInput>
+): Promise<CashEntry> {
+  return required<CashEntry>(
+    await insforge.database
+      .from("cash_entries")
+      .update(patch)
+      .eq("id", id)
+      .select("*")
+      .single(),
+    "Catatan kas"
+  )
+}
+
+export async function deleteCashEntry(id: string): Promise<void> {
+  const { error } = await insforge.database
+    .from("cash_entries")
+    .delete()
+    .eq("id", id)
+  if (error) throw new Error(error.message)
 }
 
 // ---------------------------------------------------------------------------

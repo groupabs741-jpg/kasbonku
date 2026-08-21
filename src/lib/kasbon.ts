@@ -200,6 +200,27 @@ export type Installment = {
   updated_at: string
 }
 
+/**
+ * Baris buku kas manual (sheet "Pencatatan") — suntikan modal, pembayaran fee,
+ * dan koreksi. Baris KASBON/ADM/KLAIM tidak disimpan di sini; keduanya dihitung
+ * realtime dari receivables + installments saat merangkai buku kas.
+ */
+export type CashEntryKind = "modal" | "fee" | "klaim" | "koreksi"
+export type CashDirection = "masuk" | "keluar"
+
+export type CashEntry = {
+  id: string
+  entry_date: string
+  description: string
+  kind: CashEntryKind
+  direction: CashDirection
+  amount: number
+  note: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 export type Notification = {
   id: string
   application_id: string | null

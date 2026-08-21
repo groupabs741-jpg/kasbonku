@@ -9,7 +9,10 @@ import {
   FilePlus2,
   FileSpreadsheet,
   Filter,
+  NotebookPen,
+  Plus,
   Search,
+  Trash2,
   WalletCards,
 } from "lucide-react"
 
@@ -24,8 +27,17 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { DatePicker } from "@/components/ui/date-picker"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Table,
@@ -46,7 +58,10 @@ import {
   StatusBadge,
 } from "@/components/kasbon/shared"
 import {
+  createCashEntry,
+  deleteCashEntry,
   downloadReport,
+  fetchCashEntries,
   fetchInstallments,
   fetchInstallmentsFor,
   setInstallmentStatus,
@@ -54,16 +69,20 @@ import {
 import {
   formatCompactCurrency,
   formatCurrency,
+  formatCurrencyInput,
   formatDate,
   toDateInput,
 } from "@/lib/format"
 import type {
   Application,
+  CashDirection,
+  CashEntry,
+  CashEntryKind,
   DashboardStats,
   Installment,
   Receivable,
 } from "@/lib/kasbon"
-import type { ReportType } from "@/lib/api"
+import type { CashEntryInput, ReportType } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type AdminData = {
@@ -641,8 +660,8 @@ function ReceivablesGrid({
   // Sel uang pakai format Rp (konsisten dgn kartu detail & laporan).
   const num = (value: number) => formatCurrency(Math.round(value))
 
-  // BATCH + NO + NAMA + 7 kolom finansial; dipakai untuk colSpan baris header.
-  const FIXED_COLS = 10
+  // NO + NAMA + 7 kolom finansial; dipakai untuk colSpan baris header.
+  const FIXED_COLS = 9
 
   if (installments.isPending) {
     return <LoadingBlock label="Memuat grid piutang…" />
@@ -672,7 +691,6 @@ function ReceivablesGrid({
   // persis selebar ini, jadi sel beku (sticky) tak pernah melebihi kolomnya atau
   // menutupi header sebelah, dan offset kiri NAMA pasti = batch + no.
   const COL_W = {
-    batch: 64,
     no: 48,
     name: 264,
     tgl: 140,
@@ -685,7 +703,6 @@ function ReceivablesGrid({
     month: 138,
   }
   const fixedCols = [
-    COL_W.batch,
     COL_W.no,
     COL_W.name,
     COL_W.tgl,
@@ -699,11 +716,10 @@ function ReceivablesGrid({
   const tableWidth =
     fixedCols.reduce((sum, w) => sum + w, 0) + monthColumns.length * COL_W.month
 
-  // Freeze pane kiri (ala Excel): BATCH, NO, NAMA menempel saat scroll horizontal.
-  const frozen: Record<"batch" | "no" | "name", { left: number }> = {
-    batch: { left: 0 },
-    no: { left: COL_W.batch },
-    name: { left: COL_W.batch + COL_W.no },
+  // Freeze pane kiri (ala Excel): NO, NAMA menempel saat scroll horizontal.
+  const frozen: Record<"no" | "name", { left: number }> = {
+    no: { left: 0 },
+    name: { left: COL_W.no },
   }
   const frozenStyle = (col: keyof typeof frozen): React.CSSProperties => ({
     left: frozen[col].left,
@@ -807,7 +823,6 @@ function ReceivablesGrid({
           style={{ width: tableWidth, minWidth: "100%" }}
         >
           <colgroup>
-            <col style={{ width: COL_W.batch }} />
             <col style={{ width: COL_W.no }} />
             <col style={{ width: COL_W.name }} />
             <col style={{ width: COL_W.tgl }} />
@@ -833,12 +848,6 @@ function ReceivablesGrid({
               </th>
             </tr>
             <tr>
-              <th
-                className={cn(headBase, "z-30 text-center")}
-                style={frozenStyle("batch")}
-              >
-                BATCH
-              </th>
               <th
                 className={cn(headBase, "z-30 text-center")}
                 style={frozenStyle("no")}
@@ -868,7 +877,6 @@ function ReceivablesGrid({
           <tbody>
             {/* TOTAL keseluruhan */}
             <tr className={cn("font-semibold", totalBg)}>
-              <FrozenCell col="batch" bg={totalBg} />
               <FrozenCell col="no" bg={totalBg} />
               <NameCell bg={totalBg}>TOTAL</NameCell>
               <td className={cn(cellBase, totalBg)} />
@@ -907,14 +915,14 @@ function ReceivablesGrid({
                       batchBg,
                       "sticky left-0 z-10 font-semibold"
                     )}
-                    colSpan={3}
+                    colSpan={2}
                     style={{ left: 0 }}
                   >
                     Batch {batchNo} · {formatDate(disbursedOn)}
                   </td>
                   <td
                     className={cn(cellBase, batchBg, "text-muted-foreground")}
-                    colSpan={FIXED_COLS - 3 + monthColumns.length}
+                    colSpan={FIXED_COLS - 2 + monthColumns.length}
                   >
                     {group.length} karyawan
                   </td>
@@ -922,14 +930,6 @@ function ReceivablesGrid({
 
                 {group.map((item, index) => (
                   <tr key={item.id} className="hover:bg-muted/30">
-                    <FrozenCell
-                      col="batch"
-                      bg="bg-card"
-                      align="right"
-                      className="text-muted-foreground"
-                    >
-                      {batchNo}
-                    </FrozenCell>
                     <FrozenCell
                       col="no"
                       bg="bg-card"
@@ -976,7 +976,6 @@ function ReceivablesGrid({
 
                 {/* Subtotal batch */}
                 <tr className={cn("font-medium", subtotalBg)}>
-                  <FrozenCell col="batch" bg={subtotalBg} />
                   <FrozenCell col="no" bg={subtotalBg} />
                   <NameCell bg={subtotalBg}>Subtotal</NameCell>
                   <td className={cn(cellBase, subtotalBg)} />
@@ -1359,5 +1358,581 @@ export function AdminReports({
         </CardFooter>
       </Card>
     </div>
+  )
+}
+
+// ===========================================================================
+// Pencatatan (buku kas) — arus kas dana kasbon, realtime dari data asli
+// ===========================================================================
+
+/** Satu baris buku kas, entah diturunkan dari data atau entri manual. */
+type LedgerRow = {
+  key: string
+  date: string
+  description: string
+  masuk: number
+  keluar: number
+  modal: number
+  klaim: number
+  adm1: number
+  adm2: number
+  kasbon: number
+  fee: number
+  rank: number
+  saldo: number
+  source: "manual" | "derived"
+  entry?: CashEntry
+}
+
+/** Pilihan jenis catatan manual di form → memetakan ke (kind, direction). */
+const CASH_ENTRY_TYPES: {
+  value: string
+  label: string
+  kind: CashEntryKind
+  direction: CashDirection
+}[] = [
+  { value: "modal:masuk", label: "Modal masuk", kind: "modal", direction: "masuk" },
+  { value: "fee:keluar", label: "Fee keluar", kind: "fee", direction: "keluar" },
+  {
+    value: "klaim:masuk",
+    label: "Klaim kasbon masuk (manual)",
+    kind: "klaim",
+    direction: "masuk",
+  },
+  {
+    value: "koreksi:masuk",
+    label: "Koreksi — kas masuk",
+    kind: "koreksi",
+    direction: "masuk",
+  },
+  {
+    value: "koreksi:keluar",
+    label: "Koreksi — kas keluar",
+    kind: "koreksi",
+    direction: "keluar",
+  },
+]
+
+/**
+ * Sheet "Pencatatan" ala Excel: buku kas dana kasbon dengan saldo berjalan.
+ * Sebagian besar baris DITURUNKAN realtime dari data asli — KASBON keluar & ADM
+ * masuk per batch pencairan, plus KLAIM KASBON masuk (angsuran "Sudah Dipotong"
+ * digabung per batch per bulan). Baris yang tak ada di data — MODAL, FEE, koreksi
+ * — diinput admin lewat tabel cash_entries dan digabung ke sini, lalu diurut per
+ * tanggal untuk menghitung saldo berjalan.
+ */
+export function AdminLedger({
+  data,
+  onNotify,
+}: {
+  data: AdminData
+  onNotify: (message: string) => void
+}) {
+  const queryClient = useQueryClient()
+  const [dialogOpen, setDialogOpen] = React.useState(false)
+  const [error, setError] = React.useState("")
+
+  const receivables = data.receivables
+
+  const cashEntriesQuery = useQuery({
+    queryKey: ["cash-entries"],
+    queryFn: fetchCashEntries,
+    refetchInterval: 30_000,
+  })
+
+  const remove = useMutation({
+    mutationFn: deleteCashEntry,
+    onSuccess: async () => {
+      setError("")
+      await queryClient.invalidateQueries({ queryKey: ["cash-entries"] })
+      onNotify("Catatan kas dihapus.")
+    },
+    onError: (mutationError) =>
+      setError(
+        mutationError instanceof Error
+          ? mutationError.message
+          : String(mutationError)
+      ),
+  })
+
+  const cashEntries = cashEntriesQuery.data ?? []
+
+  const { rows, totals } = React.useMemo(() => {
+    const draft: LedgerRow[] = []
+
+    // Batch = semua receivable yang cair di tanggal sama, dinomori urut tanggal.
+    const byDate = new Map<string, Receivable[]>()
+    for (const item of receivables) {
+      const group = byDate.get(item.disbursed_on) ?? []
+      group.push(item)
+      byDate.set(item.disbursed_on, group)
+    }
+    const sortedBatches = [...byDate.entries()].sort((a, b) =>
+      a[0].localeCompare(b[0])
+    )
+    const batchNoOf = new Map<string, number>()
+    sortedBatches.forEach(([date], index) => batchNoOf.set(date, index + 1))
+
+    const adm2Of = (item: Receivable) =>
+      item.monthly_admin_fee * item.tenure_months
+    const sum = (list: Receivable[], pick: (item: Receivable) => number) =>
+      list.reduce((total, item) => total + pick(item), 0)
+
+    // Baris turunan per batch: KASBON keluar + ADM masuk.
+    for (const [disbursedOn, group] of sortedBatches) {
+      const no = batchNoOf.get(disbursedOn) ?? 0
+      const principal = sum(group, (r) => r.principal)
+      const adm1 = sum(group, (r) => r.provisi_fee)
+      const adm2 = sum(group, adm2Of)
+      draft.push({
+        key: `kasbon-${disbursedOn}`,
+        date: disbursedOn,
+        description: `KASBON BATCH ${no}`,
+        masuk: 0,
+        keluar: principal,
+        modal: 0,
+        klaim: 0,
+        adm1: 0,
+        adm2: 0,
+        kasbon: principal,
+        fee: 0,
+        rank: 2,
+        saldo: 0,
+        source: "derived",
+      })
+      draft.push({
+        key: `adm-${disbursedOn}`,
+        date: disbursedOn,
+        description: `ADM BATCH ${no}`,
+        masuk: adm1 + adm2,
+        keluar: 0,
+        modal: 0,
+        klaim: 0,
+        adm1,
+        adm2,
+        kasbon: 0,
+        fee: 0,
+        rank: 3,
+        saldo: 0,
+        source: "derived",
+      })
+    }
+
+    // KLAIM KASBON (turunan angsuran "Sudah Dipotong", digabung per batch per
+    // bulan) DINONAKTIFKAN SEMENTARA atas permintaan owner — baris auto ini tak
+    // ditampilkan di buku kas, dan data angsuran/Kartu Piutang tidak disentuh.
+    // Menyalakan lagi: kembalikan query `installments` (fetchInstallmentsFor),
+    // map `recBatch`, dan loop `klaimGroups` yang membuat baris rank 4.
+
+    // Baris manual dari cash_entries.
+    for (const entry of cashEntries) {
+      const masuk = entry.direction === "masuk" ? entry.amount : 0
+      const keluar = entry.direction === "keluar" ? entry.amount : 0
+      draft.push({
+        key: `manual-${entry.id}`,
+        date: entry.entry_date,
+        description: entry.description,
+        masuk,
+        keluar,
+        modal: entry.kind === "modal" ? entry.amount : 0,
+        klaim: entry.kind === "klaim" ? entry.amount : 0,
+        adm1: 0,
+        adm2: 0,
+        kasbon: 0,
+        fee: entry.kind === "fee" ? entry.amount : 0,
+        rank:
+          entry.kind === "modal"
+            ? 0
+            : entry.kind === "klaim"
+              ? 5
+              : entry.kind === "fee"
+                ? 6
+                : 7,
+        saldo: 0,
+        source: "manual",
+        entry,
+      })
+    }
+
+    // Urut per tanggal (lalu rank, lalu keterangan) dan hitung saldo berjalan.
+    draft.sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        a.rank - b.rank ||
+        a.description.localeCompare(b.description)
+    )
+    let running = 0
+    const acc = {
+      masuk: 0,
+      keluar: 0,
+      modal: 0,
+      klaim: 0,
+      adm1: 0,
+      adm2: 0,
+      kasbon: 0,
+      fee: 0,
+    }
+    for (const row of draft) {
+      running += row.masuk - row.keluar
+      row.saldo = running
+      acc.masuk += row.masuk
+      acc.keluar += row.keluar
+      acc.modal += row.modal
+      acc.klaim += row.klaim
+      acc.adm1 += row.adm1
+      acc.adm2 += row.adm2
+      acc.kasbon += row.kasbon
+      acc.fee += row.fee
+    }
+    return { rows: draft, totals: { ...acc, saldo: running } }
+  }, [receivables, cashEntries])
+
+  if (data.isPending) return <LoadingBlock />
+  if (data.error) return <ErrorBlock error={data.error} />
+
+  const money = (value: number) =>
+    value ? formatCurrency(Math.round(value)) : ""
+
+  const head =
+    "sticky top-0 z-10 border-b border-border px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground whitespace-nowrap"
+  const cell = "border-b border-border/60 px-3 py-2 align-middle"
+  const num = cn(cell, "text-right tabular-nums whitespace-nowrap")
+  const inCls = "kasbon-ledger-in"
+  const outCls = "kasbon-ledger-out"
+  const saldoCls = "kasbon-ledger-saldo"
+
+  const cashFailed = Boolean(cashEntriesQuery.error)
+
+  return (
+    <div className="space-y-6">
+      <PageIntro
+        title="Pencatatan"
+        description="Buku kas dana kasbon dengan saldo berjalan. Baris KASBON, ADM, dan KLAIM dihitung otomatis realtime dari data pencairan dan potongan; MODAL, FEE, dan koreksi diinput manual."
+      />
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card className="border-border/80 shadow-none">
+          <CardContent className="p-5">
+            <Metric label="Total kas masuk" value={formatCurrency(totals.masuk)} />
+          </CardContent>
+        </Card>
+        <Card className="border-border/80 shadow-none">
+          <CardContent className="p-5">
+            <Metric label="Total kas keluar" value={formatCurrency(totals.keluar)} />
+          </CardContent>
+        </Card>
+        <Card className="border-border/80 shadow-none">
+          <CardContent className="p-5">
+            <Metric
+              label="Saldo berjalan"
+              value={formatCurrency(totals.saldo)}
+              highlight
+            />
+          </CardContent>
+        </Card>
+      </div>
+
+      {error ? (
+        <p
+          role="alert"
+          className="rounded-2xl bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          {error}
+        </p>
+      ) : null}
+
+      {cashFailed ? (
+        <p
+          role="alert"
+          className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300"
+        >
+          Catatan manual (modal/fee/koreksi) belum bisa dimuat — tabel{" "}
+          <code>cash_entries</code> mungkin belum di-migrate. Baris turunan dari
+          data asli tetap ditampilkan di bawah.
+        </p>
+      ) : null}
+
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          {rows.length} baris · saldo dihitung otomatis dari urutan tanggal
+        </p>
+        <Button size="sm" onClick={() => setDialogOpen(true)} disabled={cashFailed}>
+          <Plus /> Tambah catatan
+        </Button>
+      </div>
+
+      {rows.length === 0 ? (
+        <EmptyState
+          icon={NotebookPen}
+          title="Buku kas masih kosong"
+          description="Baris otomatis muncul begitu ada batch pencairan. Tambahkan modal awal lewat tombol Tambah catatan agar saldo mulai berjalan."
+        />
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border border-border/70 bg-card">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr>
+                <th className={cn(head, "bg-muted text-center")}>NO</th>
+                <th className={cn(head, "bg-muted text-left")}>TANGGAL</th>
+                <th className={cn(head, "bg-muted text-left")}>KETERANGAN</th>
+                <th className={cn(head, inCls, "text-right")}>KAS MASUK</th>
+                <th className={cn(head, inCls, "text-right")}>MODAL</th>
+                <th className={cn(head, inCls, "text-right")}>KLAIM KASBON</th>
+                <th className={cn(head, inCls, "text-right")}>ADM 1</th>
+                <th className={cn(head, inCls, "text-right")}>ADM 2</th>
+                <th className={cn(head, outCls, "text-right")}>KAS KELUAR</th>
+                <th className={cn(head, outCls, "text-right")}>KASBON</th>
+                <th className={cn(head, outCls, "text-right")}>FEE</th>
+                <th className={cn(head, saldoCls, "text-right")}>SALDO BERJALAN</th>
+                <th className={cn(head, "bg-muted w-10")} aria-label="Aksi" />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr key={row.key} className="group hover:bg-muted/30">
+                  <td className={cn(cell, "text-center text-muted-foreground")}>
+                    {index + 1}
+                  </td>
+                  <td className={cn(cell, "whitespace-nowrap text-muted-foreground")}>
+                    {formatDate(row.date)}
+                  </td>
+                  <td className={cn(cell, "min-w-[220px]")}>
+                    <span className={row.source === "manual" ? "font-medium" : ""}>
+                      {row.description}
+                    </span>
+                    {row.source === "derived" ? (
+                      <Badge
+                        variant="outline"
+                        className="ml-2 border-border/60 px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+                      >
+                        auto
+                      </Badge>
+                    ) : null}
+                  </td>
+                  <td className={cn(num, inCls, "font-medium")}>{money(row.masuk)}</td>
+                  <td className={cn(num, inCls)}>{money(row.modal)}</td>
+                  <td className={cn(num, inCls)}>{money(row.klaim)}</td>
+                  <td className={cn(num, inCls)}>{money(row.adm1)}</td>
+                  <td className={cn(num, inCls)}>{money(row.adm2)}</td>
+                  <td className={cn(num, outCls, "font-medium")}>
+                    {money(row.keluar)}
+                  </td>
+                  <td className={cn(num, outCls)}>{money(row.kasbon)}</td>
+                  <td className={cn(num, outCls)}>{money(row.fee)}</td>
+                  <td className={cn(num, saldoCls, "font-semibold")}>
+                    {formatCurrency(Math.round(row.saldo))}
+                  </td>
+                  <td className={cn(cell, "text-center")}>
+                    {row.source === "manual" && row.entry ? (
+                      <button
+                        type="button"
+                        title="Hapus catatan"
+                        disabled={remove.isPending}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Hapus catatan "${row.description}"? Tindakan ini tidak bisa dibatalkan.`
+                            )
+                          ) {
+                            remove.mutate(row.entry!.id)
+                          }
+                        }}
+                        className="rounded-lg p-1 text-muted-foreground opacity-0 transition-colors group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+                      >
+                        <Trash2 className="size-4" />
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+              <tr className={cn("font-semibold", "kasbon-piutang-total")}>
+                <td className={cn(cell, "text-muted-foreground")} colSpan={3}>
+                  TOTAL
+                </td>
+                <td className={cn(num, inCls)}>{money(totals.masuk)}</td>
+                <td className={cn(num, inCls)}>{money(totals.modal)}</td>
+                <td className={cn(num, inCls)}>{money(totals.klaim)}</td>
+                <td className={cn(num, inCls)}>{money(totals.adm1)}</td>
+                <td className={cn(num, inCls)}>{money(totals.adm2)}</td>
+                <td className={cn(num, outCls)}>{money(totals.keluar)}</td>
+                <td className={cn(num, outCls)}>{money(totals.kasbon)}</td>
+                <td className={cn(num, outCls)}>{money(totals.fee)}</td>
+                <td className={cn(num, saldoCls)}>
+                  {formatCurrency(Math.round(totals.saldo))}
+                </td>
+                <td className={cell} />
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <CashEntryDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        onNotify={onNotify}
+      />
+    </div>
+  )
+}
+
+/** Form tambah catatan manual buku kas (modal, fee, klaim manual, koreksi). */
+function CashEntryDialog({
+  open,
+  onOpenChange,
+  onNotify,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onNotify: (message: string) => void
+}) {
+  const queryClient = useQueryClient()
+  const [date, setDate] = React.useState<Date | undefined>(() => new Date())
+  const [description, setDescription] = React.useState("")
+  const [typeValue, setTypeValue] = React.useState(CASH_ENTRY_TYPES[0].value)
+  const [amount, setAmount] = React.useState("")
+  const [note, setNote] = React.useState("")
+  const [error, setError] = React.useState("")
+
+  const reset = () => {
+    setDate(new Date())
+    setDescription("")
+    setTypeValue(CASH_ENTRY_TYPES[0].value)
+    setAmount("")
+    setNote("")
+    setError("")
+  }
+
+  const create = useMutation({
+    mutationFn: (input: CashEntryInput) => createCashEntry(input),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["cash-entries"] })
+      onNotify("Catatan kas ditambahkan.")
+      reset()
+      onOpenChange(false)
+    },
+    onError: (mutationError) =>
+      setError(
+        mutationError instanceof Error
+          ? mutationError.message
+          : String(mutationError)
+      ),
+  })
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault()
+    const type = CASH_ENTRY_TYPES.find((item) => item.value === typeValue)
+    const entryDate = toDateInput(date)
+    const nominal = Number(amount.replace(/\D/g, ""))
+    if (!type) return setError("Pilih jenis catatan.")
+    if (!entryDate) return setError("Tanggal wajib diisi.")
+    if (!description.trim()) return setError("Keterangan wajib diisi.")
+    if (!(nominal > 0)) return setError("Nominal harus lebih dari nol.")
+    setError("")
+    create.mutate({
+      entry_date: entryDate,
+      description: description.trim(),
+      kind: type.kind,
+      direction: type.direction,
+      amount: nominal,
+      note: note.trim() || null,
+    })
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) reset()
+        onOpenChange(next)
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Tambah catatan kas</DialogTitle>
+          <DialogDescription>
+            Baris manual untuk hal yang tidak ada di data pencairan — modal awal,
+            pembayaran fee, atau koreksi. Baris KASBON/ADM/KLAIM sudah otomatis.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form onSubmit={submit} className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="cash-date">Tanggal</Label>
+              <DatePicker id="cash-date" value={date} onChange={setDate} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cash-type">Jenis</Label>
+              <NativeSelect
+                id="cash-type"
+                className="w-full"
+                value={typeValue}
+                onChange={(event) => setTypeValue(event.target.value)}
+              >
+                {CASH_ENTRY_TYPES.map((item) => (
+                  <NativeSelectOption key={item.value} value={item.value}>
+                    {item.label}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="cash-desc">Keterangan</Label>
+            <Input
+              id="cash-desc"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder="mis. DANA KASBON AWAL"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="cash-amount">Nominal</Label>
+            <Input
+              id="cash-amount"
+              inputMode="numeric"
+              value={formatCurrencyInput(amount)}
+              onChange={(event) =>
+                setAmount(event.target.value.replace(/\D/g, ""))
+              }
+              placeholder="Rp 0"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="cash-note">Catatan (opsional)</Label>
+            <Input
+              id="cash-note"
+              value={note}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Keterangan tambahan"
+            />
+          </div>
+
+          {error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          ) : null}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+            >
+              Batal
+            </Button>
+            <Button type="submit" disabled={create.isPending}>
+              {create.isPending ? <Spinner /> : <Plus />}
+              Simpan
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
